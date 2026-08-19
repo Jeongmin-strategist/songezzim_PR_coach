@@ -1,0 +1,2201 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+<title>AI 클린 동작 분석 (프로토타입)</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#131a22; --panel2:#1a232e; --line:#243040;
+    --text:#e9eef3; --muted:#8fa1b3;
+    /* dataviz skill: dark-mode categorical + status steps (reused as-is) */
+    --series-1:#3987e5; /* blue: 바(손목) 높이 */
+    --series-2:#d95926; /* orange: 엉덩이 높이 */
+    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#e66767;
+    --grid:#2c2c2a; --axis:#383835;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;}
+  #app{max-width:560px;margin:0 auto;padding:12px 12px 40px;}
+  header{padding:8px 4px 14px;}
+  header h1{font-size:18px;margin:0 0 2px;}
+  header p{margin:0;font-size:12.5px;color:var(--muted);line-height:1.5;}
+  #liftSelect{display:flex;gap:6px;margin-top:12px;}
+  .liftTab{flex:1;padding:10px 4px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);
+    color:var(--muted);font-weight:600;font-size:12.5px;cursor:pointer;white-space:nowrap;}
+  .liftTab.active{background:var(--series-1);color:#04121f;border-color:var(--series-1);}
+  .liftTab:active{transform:scale(0.98);}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin:10px 0;}
+  .card h3{margin:0 0 8px;font-size:13px;color:var(--muted);font-weight:600;}
+  #dropZone{border:1.5px dashed var(--line);border-radius:12px;padding:22px 12px;text-align:center;
+    font-size:13px;color:var(--muted);cursor:pointer;}
+  #dropZone.drag{border-color:var(--series-1);color:var(--text);}
+  input[type=file]{display:none;}
+  button, select{font-size:13px;padding:9px 12px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--text);}
+  button.primary{background:var(--series-1);color:#04121f;border-color:var(--series-1);font-weight:600;}
+  button:disabled{opacity:.4;}
+  button:active{transform:scale(0.97);}
+  #progressWrap{margin-top:10px;display:none;}
+  #progressBar{height:8px;border-radius:6px;background:var(--panel2);overflow:hidden;}
+  #progressFill{height:100%;width:0%;background:var(--series-1);transition:width .1s linear;}
+  #progressLabel{font-size:11.5px;color:var(--muted);margin-top:5px;}
+  #videoWrap{position:relative;width:100%;aspect-ratio:4/5;background:#000;border-radius:12px;overflow:hidden;
+    border:1px solid var(--line);display:none;}
+  video{width:100%;height:100%;object-fit:contain;display:block;background:#000;}
+  canvas#overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
+  #playerControls{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;}
+  #scrubRow{display:flex;align-items:center;gap:8px;margin-top:8px;}
+  #playPauseBtn{flex:none;padding:7px 12px;}
+  #scrubBar{flex:1;min-width:0;accent-color:var(--series-1);}
+  #scrubTime{flex:none;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;}
+  #jumpRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  #jumpRow button{font-size:12px;padding:7px 10px;}
+  svg#chart{width:100%;height:auto;display:block;touch-action:none;cursor:pointer;}
+  .legend{display:flex;gap:16px;font-size:12px;color:var(--muted);margin-bottom:6px;}
+  .explain{font-size:12.5px;color:var(--muted);line-height:1.55;margin:0 0 10px;}
+  .jumpLink{display:inline-block;margin-left:4px;font-size:11.5px;padding:2px 8px;border-radius:20px;
+    border:1px solid var(--series-1);background:rgba(57,135,229,0.12);color:var(--series-1);cursor:pointer;}
+  .jumpLink:active{transform:scale(0.96);}
+  .videoLink{display:inline-block;margin-top:4px;font-size:11.5px;color:var(--series-2);text-decoration:none;}
+  .videoLink:active{opacity:0.7;}
+  #feedbackSummary{background:var(--panel2);border:1px solid var(--line);border-radius:12px;
+    padding:12px 14px;margin-bottom:12px;}
+  #feedbackSummary .badges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+  #feedbackSummary .badge{font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600;}
+  #feedbackSummary .badge.good{background:rgba(12,163,12,0.16);color:var(--good);}
+  #feedbackSummary .badge.warn{background:rgba(250,178,25,0.16);color:var(--warning);}
+  #feedbackSummary .badge.bad{background:rgba(230,103,103,0.16);color:var(--critical);}
+  #feedbackSummary .headline{font-size:14.5px;font-weight:600;margin-bottom:4px;}
+  #feedbackSummary .sub{font-size:12.5px;color:var(--muted);line-height:1.55;}
+  .legend .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;}
+  #tooltip{position:absolute;pointer-events:none;background:rgba(19,26,34,.95);border:1px solid var(--line);
+    border-radius:8px;padding:6px 9px;font-size:11.5px;color:var(--text);display:none;white-space:nowrap;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th,td{text-align:left;padding:6px 4px;border-top:1px solid var(--line);}
+  th{color:var(--muted);font-weight:600;font-size:11.5px;}
+  td.num{font-variant-numeric:tabular-nums;}
+  #liveFeedback .item{display:flex;gap:8px;align-items:flex-start;padding:6px 0;font-size:13.5px;border-top:1px solid var(--line);}
+  #liveFeedback .item:first-child{border-top:none;}
+  .tag{flex:none;width:8px;height:8px;border-radius:50%;margin-top:5px;}
+  .tag.good{background:var(--good);} .tag.warn{background:var(--warning);} .tag.bad{background:var(--critical);}
+  #disclaimer{font-size:11px;color:var(--muted);line-height:1.6;margin-top:10px;padding:0 2px;}
+
+  /* 성장 기록(히스토리) 카드 */
+  #historyList .histRow{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;}
+  #historyList .histRow:first-child{border-top:none;}
+  #historyList .histMeta{color:var(--muted);font-size:11.5px;margin-top:2px;}
+  #historyList .histLeft{display:flex;gap:8px;align-items:flex-start;}
+  #historyList .histActions{display:flex;gap:6px;flex:none;}
+  #historyList .histActions button{font-size:11px;padding:4px 8px;}
+  #historyDeltaBox{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0;font-size:12.5px;line-height:1.6;}
+  #compareResult{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;}
+  .compareGrid{display:flex;gap:10px;}
+  .compareCol{flex:1;min-width:0;}
+  .compareCol video{width:100%;border-radius:8px;background:#000;display:block;}
+  .compareCol h4{margin:0 0 6px;font-size:12px;color:var(--muted);font-weight:600;}
+  .compareJumpRow{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;}
+  .compareJumpRow button{font-size:10.5px;padding:5px 7px;}
+
+  /* 촬영 가이드 카드 */
+  .topdown{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 4px;margin-bottom:12px;}
+  .shotRow{display:flex;gap:8px;}
+  .shotCard{flex:1;min-width:0;background:var(--panel2);border-radius:10px;overflow:hidden;border:1px solid var(--line);}
+  .shotCard.good{border-color:rgba(12,163,12,0.5);}
+  .shotCard.bad{border-color:rgba(230,103,103,0.5);}
+  .shotFrame{aspect-ratio:4/5;position:relative;background:#0d1319;}
+  .shotLabel{font-size:10.5px;text-align:center;padding:5px 3px;font-weight:600;}
+  .shotLabel.good{color:var(--good);}
+  .shotLabel.bad{color:var(--critical);}
+  .shotDesc{font-size:9.5px;color:var(--muted);text-align:center;padding:0 4px 7px;line-height:1.35;word-break:keep-all;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1 id="mainTitle">🏋️ AI 클린 동작 분석 (프로토타입)</h1>
+    <p>클린, 스내치, 또는 클린&저크 한 번 시도를 촬영한 영상을 올리면, 손목(바벨 근사)·엉덩이·무릎·팔꿈치 궤적을 추적해서 구간을 자동으로 찾고 기술적 체크포인트를 평가합니다. 옆모습, 전신이 다 나오게, 가능하면 슬로모션으로 촬영한 영상이 정확도가 높습니다. 클린&저크는 클린부터 저크까지 이어지는 한 영상을 그대로 올리면 됩니다.</p>
+    <div id="liftSelect">
+      <button class="liftTab active" data-lift="clean" type="button">클린</button>
+      <button class="liftTab" data-lift="snatch" type="button">스내치</button>
+      <button class="liftTab" data-lift="cleanjerk" type="button">클린 & 저크</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <h3>📸 촬영 가이드</h3>
+    <p class="explain">아래처럼 찍으면 관절 인식 정확도가 훨씬 높아져요.</p>
+
+    <div class="topdown">
+      <svg viewBox="0 0 220 110" width="100%" height="110" style="display:block;">
+        <line x1="14" y1="70" x2="206" y2="70" stroke="#243040" stroke-width="1"/>
+        <ellipse cx="112" cy="70" rx="20" ry="8" fill="none" stroke="#c3c2b7" stroke-width="2"/>
+        <line x1="92" y1="70" x2="132" y2="70" stroke="#c3c2b7" stroke-width="3"/>
+        <circle cx="90" cy="70" r="4.5" fill="#c3c2b7"/>
+        <circle cx="134" cy="70" r="4.5" fill="#c3c2b7"/>
+        <text x="112" y="94" text-anchor="middle" font-size="9" fill="#8fa1b3">선수 위치 (위에서 내려다본 모습)</text>
+
+        <rect x="10" y="18" width="17" height="11" rx="2" fill="none" stroke="#0ca30c" stroke-width="2"/>
+        <circle cx="18.5" cy="23.5" r="2.3" fill="#0ca30c"/>
+        <line x1="27" y1="24" x2="88" y2="62" stroke="#0ca30c" stroke-width="1.3" stroke-dasharray="3,3"/>
+        <text x="18" y="13" text-anchor="middle" font-size="9.5" fill="#0ca30c" font-weight="700">✓ 옆쪽</text>
+
+        <rect x="104" y="6" width="17" height="11" rx="2" fill="none" stroke="#e66767" stroke-width="2"/>
+        <circle cx="112.5" cy="11.5" r="2.3" fill="#e66767"/>
+        <line x1="112.5" y1="17" x2="112.5" y2="62" stroke="#e66767" stroke-width="1.3" stroke-dasharray="3,3"/>
+        <text x="112.5" y="4" text-anchor="middle" font-size="9.5" fill="#e66767" font-weight="700">✗ 정면</text>
+      </svg>
+    </div>
+
+    <div class="shotRow">
+      <div class="shotCard good">
+        <div class="shotFrame">
+          <svg viewBox="0 0 100 125" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+            <rect x="3" y="3" width="94" height="119" fill="none" stroke="#0ca30c" stroke-width="1.5" stroke-dasharray="4,3" rx="4"/>
+            <line x1="10" y1="108" x2="90" y2="108" stroke="#3b4656" stroke-width="1"/>
+            <circle cx="50" cy="24" r="7" fill="none" stroke="#e9eef3" stroke-width="2.2"/>
+            <line x1="50" y1="31" x2="50" y2="68" stroke="#e9eef3" stroke-width="2.2"/>
+            <line x1="50" y1="40" x2="34" y2="55" stroke="#e9eef3" stroke-width="2.2"/>
+            <line x1="34" y1="55" x2="34" y2="62" stroke="#e9eef3" stroke-width="2.2"/>
+            <line x1="50" y1="68" x2="38" y2="90" stroke="#e9eef3" stroke-width="2.2"/>
+            <line x1="38" y1="90" x2="42" y2="108" stroke="#e9eef3" stroke-width="2.2"/>
+            <line x1="50" y1="68" x2="60" y2="90" stroke="#e9eef3" stroke-width="2.2"/>
+            <line x1="60" y1="90" x2="58" y2="108" stroke="#e9eef3" stroke-width="2.2"/>
+            <line x1="20" y1="62" x2="48" y2="62" stroke="#d95926" stroke-width="2.5"/>
+            <circle cx="20" cy="62" r="4.5" fill="#d95926"/>
+            <circle cx="48" cy="62" r="4.5" fill="#d95926"/>
+          </svg>
+        </div>
+        <div class="shotLabel good">✓ 좋은 예</div>
+        <div class="shotDesc">머리~발끝, 바벨까지<br>전부 프레임 안</div>
+      </div>
+
+      <div class="shotCard bad">
+        <div class="shotFrame">
+          <svg viewBox="0 0 100 125" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <clipPath id="clipFrame"><rect x="3" y="3" width="94" height="88" rx="4"/></clipPath>
+            </defs>
+            <rect x="3" y="3" width="94" height="88" fill="none" stroke="#e66767" stroke-width="1.5" stroke-dasharray="4,3" rx="4"/>
+            <g clip-path="url(#clipFrame)">
+              <circle cx="50" cy="10" r="7" fill="none" stroke="#e9eef3" stroke-width="2.2"/>
+              <line x1="50" y1="17" x2="50" y2="54" stroke="#e9eef3" stroke-width="2.2"/>
+              <line x1="50" y1="26" x2="34" y2="41" stroke="#e9eef3" stroke-width="2.2"/>
+              <line x1="34" y1="41" x2="34" y2="48" stroke="#e9eef3" stroke-width="2.2"/>
+              <line x1="50" y1="54" x2="38" y2="76" stroke="#e9eef3" stroke-width="2.2"/>
+              <line x1="38" y1="76" x2="42" y2="98" stroke="#e9eef3" stroke-width="2.2"/>
+              <line x1="50" y1="54" x2="60" y2="76" stroke="#e9eef3" stroke-width="2.2"/>
+              <line x1="60" y1="76" x2="58" y2="98" stroke="#e9eef3" stroke-width="2.2"/>
+              <line x1="20" y1="48" x2="48" y2="48" stroke="#d95926" stroke-width="2.5"/>
+              <circle cx="20" cy="48" r="4.5" fill="#d95926"/>
+              <circle cx="48" cy="48" r="4.5" fill="#d95926"/>
+            </g>
+            <line x1="3" y1="91" x2="97" y2="91" stroke="#e66767" stroke-width="2" stroke-dasharray="2,2"/>
+          </svg>
+        </div>
+        <div class="shotLabel bad">✗ 나쁜 예</div>
+        <div class="shotDesc">발이 잘려서<br>발목 각도를 놓침</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>1. 영상 업로드</h3>
+    <div id="dropZone">영상 파일을 선택하거나 여기로 드래그하세요 (mp4, mov 등)</div>
+    <input type="file" id="fileInput" accept="video/*" />
+    <div id="progressWrap">
+      <div id="progressBar"><div id="progressFill"></div></div>
+      <div id="progressLabel">분석 대기 중</div>
+      <a id="failDiagBtn" href="#" style="display:none;font-size:11px;color:var(--muted);text-decoration:underline;cursor:pointer;margin-top:6px;">⚙️ 진단 정보 다운로드 (인식이 거의 안 될 때 개발자에게 전달용)</a>
+    </div>
+  </div>
+
+  <div class="card" id="playerCard" style="display:none;">
+    <h3>2. 영상 확인 &amp; 구간 이동</h3>
+    <div id="videoWrap">
+      <video id="video" playsinline></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div class="legend" style="margin-top:8px;flex-wrap:wrap;">
+      <span><span class="sw" style="background:rgba(57,135,229,0.95)"></span>팔 (왼쪽)</span>
+      <span><span class="sw" style="background:rgba(57,135,229,0.55)"></span>팔 (오른쪽)</span>
+      <span><span class="sw" style="background:rgba(217,89,38,0.95)"></span>다리 (왼쪽)</span>
+      <span><span class="sw" style="background:rgba(217,89,38,0.55)"></span>다리 (오른쪽)</span>
+      <span><span class="sw" style="background:rgba(143,161,179,0.85)"></span>몸통</span>
+    </div>
+    <div id="scrubRow">
+      <button id="playPauseBtn" type="button" disabled>▶</button>
+      <input type="range" id="scrubBar" min="0" max="1000" value="0" step="1" disabled>
+      <span id="scrubTime">0:00 / 0:00</span>
+    </div>
+    <div id="playerControls">
+      <button id="replayBtn">⟲ 처음부터 다시보기</button>
+      <select id="speedSel">
+        <option value="1">1x</option>
+        <option value="0.5" selected>0.5x</option>
+        <option value="0.25">0.25x</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted);">
+        <input type="checkbox" id="angleToggle" checked style="width:15px;height:15px;">관절 각도 표시
+      </label>
+    </div>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:4px;">위 재생바를 드래그하면 원하는 구간으로 자유롭게 이동할 수 있어요.</div>
+    <div id="jumpRow"></div>
+  </div>
+
+  <div class="card" id="chartCard" style="display:none;">
+    <h3>3. 궤적 그래프 (상대적 높이)</h3>
+    <p class="explain">이 그래프가 보여주는 건: 시간에 따라 <b>바(손목)</b>와 <b>엉덩이</b>가 얼마나 높이 있었는지예요. 잘 된 클린은 보통 두 선이 같이 부드럽게 올라가다가, 파란선(바)이 먼저 정점을 찍고(트리플 익스텐션), 곧이어 주황선(엉덩이)이 급격히 떨어졌다가(캐치, 몸을 낮춰 받는 순간) 다시 올라가는(회복) 모양을 그려요. 선이 유독 들쭉날쭉한 구간이 있다면 그 부분은 카메라가 순간적으로 관절을 놓쳤을 가능성이 있다는 뜻이에요. <b>그래프 아무 지점이나 탭/클릭하면 영상이 바로 그 순간으로 이동</b>하니, 궁금한 지점을 직접 짚어가며 눈으로 확인해보세요. 점선은 자동으로 찾은 구간(이륙·익스텐션·캐치) 위치예요.</p>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--series-1)"></span>바(손목) 높이</span>
+      <span><span class="sw" style="background:var(--series-2)"></span>엉덩이 높이</span>
+    </div>
+    <div style="position:relative;">
+      <svg id="chart" viewBox="0 0 640 220"></svg>
+      <div id="tooltip"></div>
+    </div>
+  </div>
+
+  <div class="card" id="tableCard" style="display:none;">
+    <h3>4. 구간별 체크포인트</h3>
+    <p class="explain">자동으로 찾은 각 구간의 정확한 시점과, 그 순간 관절이 얼마나 펴져 있었는지예요. 다리를 완전히 펴면 180°에 가깝고, 깊게 굽히면 90° 밑으로 내려가요 — 그래서 "익스텐션"은 각도가 클수록, "캐치"는 (의도적으로) 작을수록 자연스러워요. 값이 <b>'-'</b>로 나오면 그 순간 그 관절이 화면에 가려지는 등 이유로 인식되지 않았다는 뜻이에요 (예: 발끝이 프레임 밖으로 나가면 발목각이 '-'로 나올 수 있어요).</p>
+    <table id="checkTable"><thead>
+      <tr><th>구간</th><th>시점</th><th>엉덩이각</th><th>무릎각</th><th>팔꿈치각</th></tr>
+    </thead><tbody></tbody></table>
+    <div style="margin-top:8px;">
+      <a id="debugExportBtn" href="#" style="font-size:11px;color:var(--muted);text-decoration:underline;cursor:pointer;">⚙️ 분석 데이터 다운로드 (구간 감지가 이상할 때 개발자에게 전달용)</a>
+    </div>
+  </div>
+
+  <div class="card" id="feedbackCard" style="display:none;">
+    <h3>5. 자동 피드백</h3>
+    <p class="explain">항목 옆의 "▶ 이 순간 보기"를 누르면 영상이 그 문제가 감지된 정확한 시점으로 바로 이동해요.</p>
+    <div id="feedbackSummary"></div>
+    <div id="liveFeedback"></div>
+  </div>
+
+  <div class="card" id="historyCard" style="display:none;">
+    <h3>6. 성장 기록 (시간에 따른 변화 비교)</h3>
+    <p class="explain">이번 결과를 저장해두면, 다음에 같은 동작(클린/스내치/클린&저크)을 분석할 때마다 여기 쌓여서 15일 전이나 지난 시도 대비 얼마나 달라졌는지 자동으로 비교해줘요. 기본으로는 관절 각도·판정 요약 숫자만 저장되고(옵션을 체크해야 영상도 저장돼요), 이 브라우저에만 남고 서버로는 전혀 전송되지 않아요.</p>
+
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+      <button id="saveHistoryBtn" class="primary" type="button" disabled>📌 이번 결과 기록에 저장</button>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);">
+        <input type="checkbox" id="saveVideoToggle" style="width:14px;height:14px;">영상도 저장해서 나중에 나란히 비교
+      </label>
+    </div>
+    <div id="saveVideoNote" style="font-size:11px;color:var(--muted);margin:4px 0 8px;display:none;">
+      ⚠️ 영상까지 저장하면 이 브라우저 저장 공간을 꽤 차지해요. 영상이 저장된 기록은 최근 6개만 유지되고, 그보다 오래된 건 영상만 자동으로 지워져요(숫자 기록은 계속 남아요).
+    </div>
+
+    <div id="historyDeltaBox" style="display:none;"></div>
+    <div id="historyChartWrap" style="display:none;">
+      <div class="legend" style="margin-top:6px;">
+        <span><span class="sw" style="background:var(--good)"></span>양호</span>
+        <span><span class="sw" style="background:var(--warning)"></span>주의</span>
+        <span><span class="sw" style="background:var(--critical)"></span>개선 필요</span>
+      </div>
+      <svg id="historyChart" viewBox="0 0 640 160"></svg>
+    </div>
+
+    <div id="historyList"></div>
+
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button id="compareSelectedBtn" type="button" disabled>🔍 선택한 2개 기록 비교</button>
+      <span id="compareHint" style="font-size:11px;color:var(--muted);">기록 목록에서 체크박스로 2개를 고르면 비교할 수 있어요</span>
+    </div>
+    <div id="compareResult" style="display:none;margin-top:10px;"></div>
+
+    <div style="margin-top:10px;">
+      <a id="clearHistoryBtn" href="#" style="font-size:11px;color:var(--muted);text-decoration:underline;cursor:pointer;">🗑️ 이 브라우저의 기록 전체 삭제</a>
+    </div>
+  </div>
+
+  <div class="card" id="referencesCard">
+    <h3>📚 참고 문헌</h3>
+    <p class="explain">아래 기준값들은 감이 아니라 실제 역도 동작 운동학 연구 논문의 실측 수치를 참고해서 잡았어요 (자세한 적용 내역은 코드 내 TUNE 설정 주석 참고).</p>
+    <ol style="margin:0;padding-left:18px;font-size:11.5px;color:var(--muted);line-height:1.7;">
+      <li>Khuyagbaatar B, et al. "Kinematic Comparison of Snatch and Clean Lifts in Weightlifters Using Wearable Inertial Measurement Unit Sensors." <i>Physical Activity and Health</i>, 2024;1:1-9. — 트리플 익스텐션 시 엉덩이·무릎·팔꿈치 기준각</li>
+      <li>Harbili E, Alptekin A. "Comparative kinematic analysis of the snatch lifts in elite male adolescent weightlifters." <i>Journal of Sports Science and Medicine</i>, 2014;13(2):417-422. — 발목 기준각 (스내치 데이터로 대체)</li>
+      <li>Gourgoulis V, Aggeloussis N, et al. "Three-dimensional kinematic analysis of the snatch of elite Greek weightlifters." <i>Journal of Sports Sciences</i>, 2000;18(8). — 바 경로 드리프트 허용 범위</li>
+      <li>"Comparative Analysis of the Kinematic Characteristics of Lunge-Style and Squat-Style Jerk Techniques in Elite Weightlifters." <i>Life</i>, 2024;14(9):1086. — 스플릿/파워 저크 자동 판별 기준(캐치 시 앞뒤 발 간격)</li>
+      <li>"Exploring the Biomechanical Characteristics of the Weightlifting Jerk." <i>ISBS Conference Proceedings Archive</i>. — 저크 딥 깊이 기준각</li>
+    </ol>
+  </div>
+
+  <div id="disclaimer">
+    ⚠️ 이 프로토타입은 손목 위치를 바벨의 근사치로 사용하는 <b>규칙 기반 데모</b>입니다. 위 참고 문헌의 실측치로 일부 기준값(트리플 익스텐션, 바 경로, 저크 딥 깊이, 스플릿/파워 저크 판별)을 보정했지만, 나머지 기준값(캐치 팔꿈치 높이, 상체 기울기, 착지 안정성 등)은 아직 연구 근거 없이 추정한 값이고, 실제 바벨 궤적·그립·무게판을 직접 인식하지도 않습니다. 구간 자동 감지가 촬영 각도·프레임레이트·가림 현상에 따라 틀릴 수 있으니, 위의 그래프와 재생 화면으로 반드시 눈으로 확인하세요. 영상은 브라우저 안에서만 처리되고 서버로 전송되지 않습니다. 고중량 역도 동작은 반드시 숙련된 코치의 지도를 함께 받으세요.
+    <br><br>
+    📷 <b>스켈레톤 점이 튀는 것을 줄이려면</b>: (1) 밝은 곳에서 촬영, (2) 관절선이 잘 보이는 몸에 붙는 옷 착용, (3) 가능하면 폰의 슬로모션(60fps 이상) 모드로 촬영, (4) 전신과 바벨이 프레임 안에 항상 들어오게 촬영해보세요. 촬영 환경이 좋아도 클린처럼 빠르고 폭발적인 동작은 일반 포즈 추정 모델의 한계로 일부 프레임에서 오차가 남을 수 있습니다.
+  </div>
+</div>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+// ---------- DOM ----------
+const mainTitle = document.getElementById('mainTitle');
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const progressWrap = document.getElementById('progressWrap');
+const progressFill = document.getElementById('progressFill');
+const progressLabel = document.getElementById('progressLabel');
+const failDiagBtn = document.getElementById('failDiagBtn');
+const playerCard = document.getElementById('playerCard');
+const video = document.getElementById('video');
+const videoWrap = document.getElementById('videoWrap');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const replayBtn = document.getElementById('replayBtn');
+const playPauseBtn = document.getElementById('playPauseBtn');
+const scrubBar = document.getElementById('scrubBar');
+const scrubTime = document.getElementById('scrubTime');
+const speedSel = document.getElementById('speedSel');
+const angleToggle = document.getElementById('angleToggle');
+const jumpRow = document.getElementById('jumpRow');
+const chartCard = document.getElementById('chartCard');
+const chartSvg = document.getElementById('chart');
+const tooltip = document.getElementById('tooltip');
+const tableCard = document.getElementById('tableCard');
+const checkTableBody = document.querySelector('#checkTable tbody');
+const debugExportBtn = document.getElementById('debugExportBtn');
+const feedbackCard = document.getElementById('feedbackCard');
+const liveFeedbackEl = document.getElementById('liveFeedback');
+const feedbackSummaryEl = document.getElementById('feedbackSummary');
+
+// ---------- 임계값 (규칙 기반, 조정 가능) ----------
+// ===== 아래 기준값들의 출처 (본문 하단 "참고 문헌" 카드에도 동일하게 표시됨) =====
+// [1] Khuyagbaatar B, Tumurbaatar M, Tsenkherjav K, Purevsuren T, Shambaljamts T, Kim K,
+//     Danjkhuu T, Danaa G, Kim YH. "Kinematic Comparison of Snatch and Clean Lifts in
+//     Weightlifters Using Wearable Inertial Measurement Unit Sensors." Physical Activity
+//     and Health, 2024;1:1-9. — 클린 2nd pull(신전 정점) 실측: hip 174.1±5.2°, knee 159.1±4.6°,
+//     elbow 157.9±17.4° (본 도구의 관절각 계산 방식(세 점 사이 사잇각, 180°=일직선)과 동일 convention 확인됨)
+// [2] Harbili E, Alptekin A. "Comparative kinematic analysis of the snatch lifts in elite
+//     male adolescent weightlifters." Journal of Sports Science and Medicine, 2014;13(2):417-422.
+//     — 스내치 2nd pull ankle 실측 ~134~136° (스내치엔 직접 적용, 클린은 고유 발목 논문을 못 찾아 대체 사용;
+//     스내치·클린은 캐치 직전까지 당김 동작이 거의 동일함)
+// [3] Gourgoulis V, Aggeloussis N, et al. "Three-dimensional kinematic analysis of the snatch
+//     of elite Greek weightlifters." Journal of Sports Sciences, 2000;18(8). — 엘리트 선수 바 경로:
+//     1차 당김~전환 구간에서 몸쪽으로 6.20±2.23cm, 2차 당김에서 반대쪽으로 3.17±4.18cm 이동
+//     (평균 어깨너비를 약 40cm로 가정해 이 도구의 정규화 비율로 환산함 — 실측 cm값을 그대로 쓴 게 아니라
+//     추정 변환을 거쳤다는 점은 참고)
+// [4] Comparative Analysis of the Kinematic Characteristics of Lunge-Style and Squat-Style Jerk
+//     Techniques in Elite Weightlifters. Life, 2024;14(9):1086. (N=32명, 52회 시도, 3D 모션캡처)
+//     — 캐치 시점 앞뒤 발(X축) 스탠스 간격이 스플릿(런지) 스타일이 스쿼트 스타일보다 52.51cm 더 넓음
+//     (절대값이 아닌 두 스타일 간 차이값만 보고됨 — 평균 어깨너비 40cm 가정 하에 정규화 비율로 환산해
+//     스플릿/파워 저크 자동 판별 기준을 만듦)
+// [5] Exploring the Biomechanical Characteristics of the Weightlifting Jerk. ISBS Conference
+//     Proceedings Archive. (N=7명) — 저크 딥 최저점 무릎 굽힘각(flexion) 실측 58±9°
+//     (이 논문은 '편 상태(0°)에서 얼마나 굽었는지'를 나타내는 flexion 각도 표기를 사용해서,
+//     본 도구가 쓰는 '세 점 사이 사잇각(180°=일직선)' 방식으로 180°-58°=122° 근사 환산함)
+// 클린·스내치 공통 기준값 (당김 구간까지는 두 동작이 거의 동일한 역학이라 공유)
+const TUNE = {
+  // 프레임당 손목 상승 속도 임계값. 어깨너비 대비 비율로 재는 이유: 카메라 거리/줌에 따라 사람이
+  // 화면을 차지하는 크기가 다르면, 같은 실제 움직임 속도라도 정규화 좌표상의 절대 속도가 달라짐
+  // (예: 폰을 가까이 대고 찍으면 어깨너비가 커서 같은 동작도 좌표 이동량이 커짐). 예전엔 절대값
+  // (0.004)으로 고정돼 있었는데, 이게 특정 촬영 거리에서만 맞고 다른 거리/기기에서는 안 맞을 수
+  // 있어서(예: PC 테스트 영상과 다른 구도로 찍은 모바일 영상에서 저크 드라이브를 못 잡는 문제로
+  // 이어졌을 가능성) 어깨너비 대비 비율로 바꿈. 0.15(코드 곳곳에서 쓰는 기본 어깨너비 추정치)
+  // 기준일 때 예전 절대값(0.004)과 거의 같은 민감도가 되도록 환산: 0.004/0.15 ≈ 0.0267.
+  LIFTOFF_VEL_RATIO: 0.0267, // 프레임당 손목 상승 속도 임계값 (어깨너비 대비 비율)
+  ELBOW_BEND_DEG: 160,    // 이 각도 아래면 '팔이 굽혀짐'으로 판단 ([1] 1차 당김~전환 구간 170~172°대 유지)
+  BARPATH_WARN: 0.25,     // 어깨너비 대비 바 드리프트 비율 경고선 ([3] 기반, 어깨너비 40cm 가정 환산치)
+  BARPATH_BAD: 0.45,
+  EXT_ANKLE_GOOD: 128, EXT_ANKLE_BAD: 112, // [2] ~134° 기준 (스내치는 직접 실측치, 클린은 대체값)
+  LEAN_WARN_DEG: 15,      // 익스텐션 대비 캐치 시 몸통 추가 기울기 (연구 근거 없음, 추정치)
+  STABILITY_WARN: 0.18,   // 캐치 후 좌우 흔들림 (어깨너비 대비, 연구 근거 없음, 추정치)
+};
+
+// 동작(클린/스내치)마다 다른 기준값 — 트리플 익스텐션 관절각 실측치가 종목별로 다르고,
+// 캐치 자세 자체가 완전히 다름(클린=프론트랙에 받기, 스내치=팔을 편 채 머리 위로 받기).
+// EXT_HIP/KNEE는 [1]의 종목별 2nd pull 실측 평균에서 같은 방식(평균-6°=good, 평균-24°=bad 등)으로 환산.
+const LIFT_TUNE = {
+  clean: {
+    label: '클린',
+    EXT_HIP_GOOD: 168, EXT_HIP_BAD: 150,     // [1] 클린 2nd pull hip 174.1±5.2°
+    EXT_KNEE_GOOD: 154, EXT_KNEE_BAD: 138,   // [1] 클린 2nd pull knee 159.1±4.6°
+    CATCH_ELBOW_DROP: 0.06, // 캐치시 팔꿈치가 어깨보다 이만큼(정규화) 아래면 프론트랙 미흡 (연구 근거 없음, 추정치)
+  },
+  snatch: {
+    label: '스내치',
+    EXT_HIP_GOOD: 166, EXT_HIP_BAD: 148,     // [1] 스내치 2nd pull hip 172.6±7.9°
+    EXT_KNEE_GOOD: 149, EXT_KNEE_BAD: 133,   // [1] 스내치 2nd pull knee 154.3±9.0°
+    LOCKOUT_ELBOW_GOOD: 170, LOCKOUT_ELBOW_BAD: 150, // [1] 스내치 캐치 elbow 179.8±7.5°(거의 완전 신전) 기준
+  },
+};
+
+// 클린 & 저크: 클린 파트(당김~프론트랙 캐치)는 클린과 완전히 같은 동작이라 클린 기준값을 그대로 재사용하고,
+// 저크 파트(딥~드라이브~오버헤드 캐치)에만 필요한 기준값을 추가함.
+LIFT_TUNE.cleanjerk = Object.assign({}, LIFT_TUNE.clean, {
+  label: '클린 & 저크',
+  DIP_KNEE_GOOD: 130, DIP_KNEE_BAD: 148, // [5] 딥 최저점 무릎각 실측 평균 122°(±9°) 환산 기준
+  // 저크 캐치도 스내치 캐치와 똑같이 팔을 완전히 펴서 머리 위로 받는 자세라 스내치 락아웃 기준([1])을 그대로 재사용
+  LOCKOUT_ELBOW_GOOD: LIFT_TUNE.snatch.LOCKOUT_ELBOW_GOOD, LOCKOUT_ELBOW_BAD: LIFT_TUNE.snatch.LOCKOUT_ELBOW_BAD,
+  SPLIT_DETECT_RATIO: 1.8, // [4] 캐치 시 앞뒤 발(X축) 간격/어깨너비 비율 - 이보다 크면 스플릿, 작으면 파워/스쿼트 저크로 판별
+});
+let currentLift = 'clean';
+
+const IDX = { LS:11, RS:12, LE:13, RE:14, LW:15, RW:16, LH:23, RH:24, LK:25, RK:26, LA:27, RA:28, LHeel:29, RHeel:30, LFoot:31, RFoot:32 };
+
+// 결함 종류별로 실제 코치/선수 유튜브 영상을 큐레이션해 피드백에 함께 붙임 (검색 링크가 아니라 특정 영상을 직접 추천).
+// title/url은 검색 결과에서 그대로 가져온 값만 사용 (채널명은 유튜브 페이지 접근이 막혀 확인 못해 넣지 않음 — 지어내지 않음).
+// 주의: 같은 이유로 영상 속 정확한 타임스탬프도 확인 못해서, 지금은 영상 전체 링크만 연결됨 —
+// 실제로 영상을 보고 어느 지점이 맞는지 알려주면 t 값을 채워서 바로 반영할 수 있음.
+const VIDEO_TIPS = {
+  barpath:   { title:'3 Drills to Keep the Bar Close (Works for Snatch OR Clean)!', url:'https://www.youtube.com/watch?v=HD0lCDnneaI', t:null },
+  earlyArm:  { title:'How To Fix Premature Arm Bend in the Clean', url:'https://www.youtube.com/watch?v=qLEiHf_HC64', t:null },
+  extension: { title:'Fix Incomplete Hip Extension in the Snatch & Clean', url:'https://www.youtube.com/watch?v=8kLQHTHx3m0', t:null },
+  catchElbow:{ title:'Get a Better Clean Rack Position | Olympic Weightlifting', url:'https://www.youtube.com/watch?v=vKmwKMKNXMw', t:null },
+  catchLean: { title:'How to keep upright torso in clean and snatch', url:'https://www.youtube.com/watch?v=RWbxiQTbTRc', t:null },
+  stability: { title:'How to Catch Your Clean Smoothly (Stop Getting Crushed!)', url:'https://www.youtube.com/watch?v=NmgtgwSEMSM', t:null },
+  shallowCatch:{ title:'Fix Power Snatching or Cleaning More Than Squat', url:'https://www.youtube.com/watch?v=-IJhKZxmcXc', t:null },
+  lockout:   { title:'Fix Your Sloppy Lockout in the Jerk & Snatch | Olympic Weightlifting Technique', url:'https://www.youtube.com/watch?v=JTsVt3t0QmY', t:null },
+  jerkDip:      { title:'Jerk Dip Depth', url:'https://www.youtube.com/shorts/DdxKXQmh6lE', t:null },
+  splitStance:  { title:'How to Find Your Split Jerk Stance | Olympic Weightlifting Technique', url:'https://www.youtube.com/watch?v=s82-kiwLDg8', t:null },
+  powerJerkCatch:{ title:'Power Jerk | Olympic Weightlifting Exercise Library', url:'https://www.youtube.com/watch?v=Ir_34nxrk1Q', t:null },
+  jerkStability:{ title:'Jerk Recovery | Olympic Weightlifting Exercise Library', url:'https://www.youtube.com/watch?v=Uv9Vqo9irfU', t:null },
+};
+function videoUrl(v){ return v.t!=null ? `${v.url}&t=${Math.round(v.t)}s` : v.url; }
+
+// 부위별 그룹 태그가 붙은 연결선. 팔(어깨-팔꿈치-손목)과 다리(엉덩이-무릎-발목)를
+// 서로 다른 색으로 그려서, 바벨 밑으로 파고드는 턴오버 구간처럼 팔다리가 화면상
+// 겹칠 때도 어떤 점이 어떤 관절인지 구분되게 함. 왼쪽/오른쪽은 같은 색조의
+// 진하기(불투명도)로 구분 (진하게=왼쪽, 연하게=오른쪽).
+const CONNECTIONS = [
+  ['11','12','torso'], ['11','23','torso'], ['12','24','torso'], ['23','24','torso'],
+  ['11','13','armL'], ['13','15','armL'],
+  ['12','14','armR'], ['14','16','armR'],
+  ['23','25','legL'], ['25','27','legL'], ['27','29','legL'], ['29','31','legL'], ['27','31','legL'],
+  ['24','26','legR'], ['26','28','legR'], ['28','30','legR'], ['30','32','legR'], ['28','32','legR'],
+].map(([a,b,g])=>[Number(a),Number(b),g]);
+
+// 개별 점(landmark) 색상 그룹 - 여러 연결선에 걸쳐도 점 하나엔 고정된 그룹 하나만 사용
+const POINT_GROUP = {
+  11:'torso', 12:'torso', 23:'torso', 24:'torso',
+  13:'armL', 15:'armL', 14:'armR', 16:'armR',
+  25:'legL', 27:'legL', 29:'legL', 31:'legL',
+  26:'legR', 28:'legR', 30:'legR', 32:'legR',
+};
+
+// dataviz 스킬의 다크모드 카테고리컬 팔레트 재사용 (blue=팔, orange=다리, 회색=몸통 기준선)
+const SKEL_COLOR = {
+  torso: 'rgba(143,161,179,0.85)',
+  armL:  'rgba(57,135,229,0.95)',
+  armR:  'rgba(57,135,229,0.55)',
+  legL:  'rgba(217,89,38,0.95)',
+  legR:  'rgba(217,89,38,0.55)',
+};
+
+function mid(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
+function angleAt(A,B,C){
+  const v1x=A.x-B.x, v1y=A.y-B.y, v2x=C.x-B.x, v2y=C.y-B.y;
+  const dot=v1x*v2x+v1y*v2y, m1=Math.hypot(v1x,v1y), m2=Math.hypot(v2x,v2y);
+  if(m1===0||m2===0) return 0;
+  let cos = Math.max(-1,Math.min(1, dot/(m1*m2)));
+  return Math.acos(cos)*180/Math.PI;
+}
+function angleFromVertical(A,B){
+  const vx=B.x-A.x, vy=B.y-A.y, m=Math.hypot(vx,vy);
+  if(m===0) return 0;
+  const c = Math.max(-1,Math.min(1, vy/m));
+  return Math.acos(c)*180/Math.PI;
+}
+
+// 값이 undefined/NaN이어도 화면 렌더링이 통째로 죽지 않도록 안전하게 숫자를 표시.
+// (특정 프레임의 필드가 예상치 못하게 비어있을 때 결과 화면 전체가 사라지던 문제 방지)
+function numOrDash(v, digits){
+  if(v===undefined || v===null || Number.isNaN(v)) return '-';
+  return v.toFixed(digits);
+}
+
+// 한글 명사 뒤에 "이/가" 주격 조사를 받침 유무에 맞게 붙여줌 (예: "엉덩이" + 가 → "엉덩이가", "무릎" + 이 → "무릎이")
+function withEunGa(word){
+  const last = word.charCodeAt(word.length-1) - 0xAC00;
+  if(last < 0 || last > 11171) return word + '이'; // 한글 음절이 아니면 기본값
+  const hasBatchim = (last % 28) !== 0;
+  return word + (hasBatchim ? '이' : '가');
+}
+
+let poseLandmarker = null;
+let resizeListenerAdded = false;
+let frames = []; // {t, wristY, wristX, hipY, hipX, shoulderY, kneeAngle, hipAngle, ankleAngle, elbowAngle, trunkAngle, lm}
+let analyzing = false;
+let events = {}; // liftoff, ext, catch, stand -> frame index
+// 랜드마크를 못 찾은 프레임이 있을 때, 실제로 화면이 비어있는지(코덱을 못 읽어 화면이 까맣게
+// 나오는 등) 한 번만 슬쩍 확인해서 기록해둠 - 조명/구도 문제와 코덱 문제를 구분해 더 정확한
+// 안내 메시지를 보여주기 위함 (아이폰 기본 촬영 형식인 HEVC(H.265)는 PC 브라우저에 따라
+// 재생은 되지만 픽셀 디코딩은 안 되는 경우가 있어, 이런 케이스를 잡아내려는 목적)
+let possibleDecodeIssue = false;
+let blankFrameChecked = false;
+// 인식된 프레임이 너무 적어서 실패로 끝났을 때, "왜" 실패했는지(포즈를 아예 못 찾은 건지,
+// seek 자체가 계속 목표 지점에 못 미쳤는지, readyState가 계속 준비 안 됐는지)를 사용자가
+// 다운로드해서 개발자에게 보내줄 수 있게 모아두는 진단 카운터. 예전엔 실패 시 아무 데이터도
+// 못 받아서 "PC에서 0개 인식됨" 같은 제보를 받아도 원인을 추적할 방법이 없었음.
+let analysisDiag = { totalIterations:0, seekMismatchCount:0, readyStateFailCount:0, maxSeekGap:0 };
+
+// ---------- 모델 ----------
+async function initModel(){
+  if(poseLandmarker) return;
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      // 실시간이 아닌 '녹화 영상 1회 분석'이라 정확도 우선으로 full 모델 사용 (lite보다 느리지만 튀는 점이 훨씬 적음)
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
+      // GPU 델리게이트는 연산 순서가 매번 살짝 달라질 수 있어(부동소수점 리덕션 순서 비결정성), 같은 영상을
+      // 여러 번 분석해도 관절 좌표가 미세하게 달라지고, 그 미세한 차이가 이륙/신전/캐치 구간을 찾는 임계값을
+      // 넘었다 안 넘었다 하면서 "같은 영상인데 구간을 잡을 때도 있고 못 잡을 때도 있는" 문제로 이어짐.
+      // CPU 델리게이트(XNNPACK)는 계산 순서가 고정돼 있어 같은 입력이면 항상 같은 결과가 나옴 — 실시간
+      // 재생이 아니라 이미 초당 프레임 단위로 seek해서 분석하는 방식이라 속도보다 일관성이 더 중요해서 전환.
+      delegate: "CPU"
+    },
+    runningMode: "VIDEO",
+    numPoses: 1
+  });
+}
+
+// ---------- 랜드마크 시간축 스무딩 (튀는 점 완화) ----------
+// 포즈 추정은 프레임마다 약간씩 흔들릴 수 있어, 이전 프레임과 지수이동평균으로 섞어
+// 스켈레톤이 부드럽게 보이도록 하고, 신뢰도(visibility)가 낮은 프레임은 이전 값을 유지해
+// 가려짐/블러로 인한 순간적인 오검출이 그대로 튀지 않게 함.
+let smoothedLandmarks = null;
+const SMOOTH_ALPHA = 0.35;
+const VIS_THRESHOLD = 0.5;
+// 한 프레임(1/30초) 사이에 관절이 이 이상(정규화 좌표 기준) 순간 이동했다면, 실제 움직임이라기보다
+// 다리가 겹치거나 발이 돌아간 자세(캐치 등)에서 모델이 순간적으로 오검출했을 가능성이 높음.
+// 이런 프레임은 평소 비율(SMOOTH_ALPHA)로 그대로 섞지 않고 훨씬 약하게만 반영해서, 스켈레톤이
+// 한 프레임 만에 엉뚱한 위치로 튀어 보이지 않게 함. 다음 프레임에서도 같은 방향이 반복되면
+// (진짜 빠른 동작이면) 몇 프레임에 걸쳐 서서히 따라잡음.
+const MAX_JUMP = 0.12;
+const OUTLIER_ALPHA = 0.08;
+function smoothLandmarks(raw){
+  if(!smoothedLandmarks){
+    smoothedLandmarks = raw.map(p=>({x:p.x, y:p.y, z:p.z||0, visibility:p.visibility}));
+  } else {
+    for(let i=0;i<raw.length;i++){
+      const r = raw[i], s = smoothedLandmarks[i];
+      if(!r || !s) continue;
+      const vis = r.visibility===undefined ? 1 : r.visibility;
+      if(vis < VIS_THRESHOLD) continue; // 신뢰도 낮은 프레임: 이전 값 유지
+      const jump = Math.hypot(r.x-s.x, r.y-s.y);
+      const alpha = jump > MAX_JUMP ? OUTLIER_ALPHA : SMOOTH_ALPHA;
+      s.x = alpha*r.x + (1-alpha)*s.x;
+      s.y = alpha*r.y + (1-alpha)*s.y;
+      s.z = alpha*(r.z||0) + (1-alpha)*s.z;
+      s.visibility = vis;
+    }
+  }
+  // 중요: 내부 상태(smoothedLandmarks)는 계속 같은 객체를 재사용/변형하므로,
+  // 그대로 반환하면 frames[] 캐시에 저장된 모든 프레임이 같은 객체를 참조하게 되어
+  // 나중엔 전부 '마지막 프레임의 자세'로 보이게 된다 (다시보기 시 스켈레톤이 고정되던 원인).
+  // 매 호출마다 독립된 스냅샷(복사본)을 새로 만들어 반환해서 이 문제를 막는다.
+  return smoothedLandmarks.map(p=>({x:p.x, y:p.y, z:p.z, visibility:p.visibility}));
+}
+
+// ---------- 파일 선택 ----------
+dropZone.addEventListener('click', ()=>fileInput.click());
+['dragover','dragenter'].forEach(ev=>dropZone.addEventListener(ev,e=>{e.preventDefault();dropZone.classList.add('drag');}));
+['dragleave','drop'].forEach(ev=>dropZone.addEventListener(ev,e=>{e.preventDefault();dropZone.classList.remove('drag');}));
+dropZone.addEventListener('drop', e=>{
+  const f = e.dataTransfer.files[0];
+  if(f) handleFile(f);
+});
+fileInput.addEventListener('change', e=>{
+  const f = e.target.files[0];
+  if(f) handleFile(f);
+});
+
+// ---------- 동작(클린/스내치) 선택 탭 ----------
+document.querySelectorAll('.liftTab').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const lift = btn.dataset.lift;
+    if(lift===currentLift) return;
+    currentLift = lift;
+    document.querySelectorAll('.liftTab').forEach(b=>b.classList.toggle('active', b.dataset.lift===currentLift));
+    mainTitle.textContent = `🏋️ AI ${LIFT_TUNE[currentLift].label} 동작 분석 (프로토타입)`;
+    // 이미 분석이 끝난 영상이 있으면, 재분석 없이 새 동작 기준으로 그래프·표·피드백만 다시 계산
+    if(frames.length>0 && events && (events.ext!=null)){
+      renderChart();
+      renderCheckpointTable();
+      renderFeedback();
+      setupJumpButtons();
+      renderHistory();
+    }
+  });
+});
+
+// 구간 자동 감지가 이상하게 나올 때, 실제로 무슨 값이 잡혔는지(엉덩이/손목 높이, 관절각,
+// 감지된 구간 인덱스 등) 그대로 내려받을 수 있게 함 - 화면만 보고는 정확한 수치를 알 수 없어서,
+// 이 파일을 받아서 전달해주면 실제 촬영 거리/카메라 구도에서 어떤 기준값이 맞는지 훨씬 정확하게
+// 확인하고 고칠 수 있음.
+debugExportBtn.addEventListener('click', (e)=>{
+  e.preventDefault();
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    currentLift,
+    events,
+    frameCount: frames.length,
+    analysisDiag, // seek가 목표 지점을 얼마나 잘 따라갔는지(재시도 횟수, 최대 어긋난 정도 등) - 재생 시 스켈레톤이 이상하거나 분석이 유독 느릴 때 참고용
+    frames: frames.map(f=>({
+      t:f.t, hipY:f.hipY, hipX:f.hipX, wristY:f.wristY, wristX:f.wristX,
+      shoulderWidth:f.shoulderWidth, hipAngle:f.hipAngle, kneeAngle:f.kneeAngle,
+      ankleAngle:f.ankleAngle, elbowAngle:f.elbowAngle, trunkAngle:f.trunkAngle,
+    })),
+  };
+  downloadJson(payload, `lift-debug-${Date.now()}.json`);
+});
+
+function downloadJson(payload, filename){
+  const blob = new Blob([JSON.stringify(payload, null, 1)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// 인식된 프레임이 너무 적어 자동 구간 감지 자체를 시도조차 못한 실패 사례 전용 진단 내보내기.
+// frames[]가 텅 비어있어 위 debugExportBtn용 payload는 의미가 없으므로, 대신 "왜 인식이
+// 안 됐는지" 추정에 필요한 값들(seek가 목표 지점에 제대로 도달했는지, readyState가 준비됐는지,
+// 브라우저/영상 정보 등)을 따로 모아서 내려받게 한다.
+failDiagBtn.addEventListener('click', (e)=>{
+  e.preventDefault();
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    currentLift,
+    frameCount: frames.length,
+    possibleDecodeIssue,
+    blankFrameChecked,
+    analysisDiag,
+    video: {
+      duration: video.duration,
+      videoWidth: video.videoWidth,
+      videoHeight: video.videoHeight,
+      currentTimeAtExport: video.currentTime,
+      readyState: video.readyState,
+      networkState: video.networkState,
+      mediaError: video.error ? { code: video.error.code, message: video.error.message } : null,
+    },
+    userAgent: navigator.userAgent,
+  };
+  downloadJson(payload, `lift-fail-diag-${Date.now()}.json`);
+});
+
+// 영상 메타데이터(재생 시간 등)가 준비될 때까지 기다리되, 'loadedmetadata'만 기다리지 않고
+// 'error'(코덱/컨테이너를 아예 못 여는 경우)와 안전판 타임아웃도 함께 감시한다. 'error'만
+// 기다리지 않고 커버해야 하는 이유: 이전엔 'loadedmetadata'만 기다렸는데, 브라우저가 파일을
+// 아예 디먹싱조차 못 하면 그 이벤트가 영영 안 와서 "AI 모델 로딩 중..."에 무한정 멈춰있는
+// 것처럼 보였다(사용자에게 아무 설명도 없이 그냥 멈춘 것으로 보임).
+function waitForVideoMetadata(video, timeoutMs=15000){
+  return new Promise(resolve=>{
+    let done = false;
+    function finish(ok, errorMsg){
+      if(done) return;
+      done = true;
+      video.removeEventListener('loadedmetadata', onMeta);
+      video.removeEventListener('error', onError);
+      resolve({ ok, errorMsg });
+    }
+    function onMeta(){ finish(true, null); }
+    function onError(){ finish(false, video.error ? video.error.message : '알 수 없는 오류'); }
+    video.addEventListener('loadedmetadata', onMeta);
+    video.addEventListener('error', onError);
+    setTimeout(()=>finish(false, '영상 로딩 시간 초과'), timeoutMs);
+  });
+}
+
+async function handleFile(file){
+  frames = []; events = {}; smoothedLandmarks = null;
+  possibleDecodeIssue = false; blankFrameChecked = false;
+  analysisDiag = { totalIterations:0, seekMismatchCount:0, readyStateFailCount:0, maxSeekGap:0 };
+  failDiagBtn.style.display = 'none';
+  scrubBar.disabled = true; scrubBar.value = 0;
+  playPauseBtn.disabled = true; playPauseBtn.textContent = '▶';
+  scrubTime.textContent = '0:00 / 0:00';
+  lastAnalyzedFile = file; // 성장 기록에 "영상도 저장" 체크 시 이 파일을 그대로 IndexedDB에 저장
+  chartCard.style.display='none'; tableCard.style.display='none'; feedbackCard.style.display='none';
+  progressWrap.style.display='block';
+  progressLabel.textContent = 'AI 모델 로딩 중...';
+  progressFill.style.width='0%';
+  try{
+    await initModel();
+  }catch(err){
+    progressLabel.textContent = '모델 로딩 실패: '+err.message;
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  video.src = url;
+  video.muted = true;
+  playerCard.style.display='block';
+  videoWrap.style.display='block';
+  const metaResult = await waitForVideoMetadata(video);
+  if(!metaResult.ok){
+    // 예전엔 'loadedmetadata'만 기다렸는데, 컨테이너/코덱을 브라우저가 아예 못 열어서
+    // 'error' 이벤트가 나는 경우(HEVC보다 더 심하게, 아예 디먹싱조차 안 되는 파일 등)엔
+    // 'loadedmetadata'가 영영 안 오니 "AI 모델 로딩 중..."에서 무한정 멈춰있는 것처럼
+    // 보였다(사용자 입장에선 아무 설명도 없이 그냥 멈춘 것). 'error' 이벤트와 안전판
+    // 타임아웃을 함께 감시해서, 이 경우에도 명확한 안내를 주고 빠져나오도록 함.
+    possibleDecodeIssue = true;
+    progressFill.style.width = '100%';
+    progressLabel.textContent = `이 브라우저가 영상 파일 자체를 열지 못했어요${metaResult.errorMsg ? ` (${metaResult.errorMsg})` : ''}. 영상 형식/코덱이 이 브라우저와 안 맞는 경우가 많아요. 영상을 mp4(H.264)로 변환해서 다시 올리거나 다른 브라우저(Chrome, Safari 등)로 시도해보세요.`;
+    failDiagBtn.style.display = 'inline-block';
+    return;
+  }
+  syncCanvasSize();
+
+  // 프리플라이트: 메타데이터(재생 시간 등)는 읽혔는데 실제 화면 픽셀(videoWidth/videoHeight)이
+  // 0으로 남아있는 경우가 있다 - 실제 제보로 확인된 사례: 이 상태에서 분석 루프를 그대로
+  // 돌리면 매 프레임 detectForVideo가 내부적으로 계속 실패하는데(예외가 조용히 잡아먹혀
+  // 화면엔 안 보임) 그 사실을 모른 채 수백 번의 무의미한 seek+분석을 반복하다가 몇십 초 뒤에야
+  // "인식된 프레임이 너무 적다"는 뒤늦고 모호한 안내만 뜨게 됐다(코덱 문제 감지용 캔버스 픽셀
+  // 확인 로직도 애초에 실행될 기회조차 없었음). 재생 시간 같은 컨테이너 정보는 코덱과 무관하게
+  // 읽히기 때문에, videoWidth/Height가 0인 건 거의 항상 "이 브라우저가 이 영상의 비디오 코덱을
+  // 디코딩하지 못한다"는 뜻이다(예: 아이폰 기본 촬영 형식인 HEVC(H.265) 영상을 HEVC 확장이
+  // 없는 Windows Chrome/Edge에서 열었을 때). 그래서 전체 분석을 시작하기 전에 미리 확인해서,
+  // 코덱이 안 맞는 상황이면 바로 명확한 안내를 주고 무의미한 분석 루프를 아예 생략한다.
+  if(video.videoWidth === 0 || video.videoHeight === 0){
+    // 일부 브라우저는 실제로 첫 프레임을 디코딩해봐야만 크기를 알려주므로, 바로 포기하지 않고
+    // 아주 짧게 재생을 한 번 시도해본 뒤에도 여전히 0이면 그때 코덱 문제로 확정한다.
+    try{
+      await video.play();
+      await new Promise(r=>setTimeout(r, 200));
+      video.pause();
+    }catch(playErr){ /* 자동재생이 막혀도 무시 - 아래에서 어차피 다시 확인함 */ }
+    video.currentTime = 0;
+  }
+  if(video.videoWidth === 0 || video.videoHeight === 0){
+    possibleDecodeIssue = true;
+    progressFill.style.width = '100%';
+    progressLabel.textContent = `이 브라우저가 영상의 화면(픽셀)을 읽지 못하고 있어요 — 재생 시간(${video.duration.toFixed(1)}초)은 인식됐지만 실제 화면 크기가 0으로 나와요. 대부분 이 브라우저가 영상의 코덱을 지원하지 않는 경우예요. 아이폰 기본 촬영 형식(HEVC/H.265)은 Windows용 Chrome/Edge에서 특히 이런 문제가 흔해요. 아이폰이라면 설정 > 카메라 > 포맷을 "높은 호환성"으로 바꿔서 다시 촬영하거나, 영상을 mp4(H.264)로 변환해서 다시 올려보세요. 다른 브라우저(예: Safari)에서 시도해보는 것도 방법이에요.`;
+    failDiagBtn.style.display = 'inline-block';
+    return;
+  }
+
+  if(!resizeListenerAdded){ window.addEventListener('resize', syncCanvasSize); resizeListenerAdded = true; }
+  const longVideoLimit = currentLift==='cleanjerk' ? 40 : 25;
+  if(video.duration > longVideoLimit){
+    const rangeHint = currentLift==='cleanjerk' ? '클린부터 저크까지 이어지는 한 번 시도만 담긴 짧은 클립(5~15초)' : `${LIFT_TUNE[currentLift].label} 한 번 시도만 담긴 짧은 클립(3~10초)`;
+    progressLabel.textContent = `영상이 깁니다. ${rangeHint}을 권장합니다. 그래도 분석을 진행합니다...`;
+  }
+  startAnalysisPass();
+}
+
+// ---------- 분석 패스 (일정한 간격으로 영상을 직접 탐색(seek)하며 프레임 캡처) ----------
+// 예전엔 영상을 느린 배속으로 재생시키면서 requestAnimationFrame으로 값이 바뀔 때마다
+// 주워담는 방식이었는데, 모델(특히 정확도 우선 full 모델) 처리 속도가 기기에 따라
+// 영상 재생 속도를 못 따라가면 중간 프레임을 건너뛰게 되고, 그러면 캡처된 프레임 사이
+// 간격이 들쭉날쭉해져서 다시보기 때 스켈레톤이 실제 동작보다 느리게/듬성듬성 움직이는
+// 것처럼 보였다. 대신 처음부터 끝까지 '고정된 간격'으로 영상 위치를 직접 이동시키고,
+// 매 위치마다 해당 프레임이 완전히 준비될 때까지 기다린 뒤 분석하는 방식으로 바꿔서
+// 항상 촘촘하고 일정한 간격의 데이터를 얻도록 함.
+const SAMPLE_FPS = 30; // 초당 몇 프레임을 분석할지 (일반적인 폰 영상 프레임레이트 수준)
+// 목표 표본 간격(초). frames[] 배열에 실제로 저장되는 간격은 이 값과 항상 같지는 않다 - 아래
+// detectEvents/detectJerkEvents의 시간 기반 창(WIN_SEC 등)이 이 값을 기준으로 계산된다.
+const NOMINAL_DT = 1/SAMPLE_FPS;
+let lastDetectTs = 0;
+
+// 모바일에서 '프레임을 못 잡는' 문제의 유력한 원인: 'seeked' 이벤트는 브라우저가 탐색을
+// 완료했다고 보고하는 시점일 뿐, 실제로 그 프레임이 디코딩되어 화면에 표시될 준비가 됐다는
+// 보장이 아님(특히 압축된 영상은 가장 가까운 키프레임부터 다시 디코딩해야 해서 모바일처럼
+// 느린 기기에서 이 차이가 커짐). requestVideoFrameCallback(rVFC)은 '다음 프레임이 실제로
+// 화면에 표시될 준비가 됐다'는 더 정확한 신호를 주는 API지만(최신 Chrome/Edge/Safari 15.4+),
+// 일부 모바일 브라우저/버전에서는 이 콜백 자체가 예상만큼 안정적으로/빠르게 오지 않는 경우가
+// 있어서, rVFC만 믿고 'seeked'를 아예 안 듣도록 짰더니 오히려 매 프레임마다 안전판 타임아웃을
+// 거의 다 채우면서 대기해 "같은 영상인데 어떤 시도는 몇 분씩 걸리는" 문제로 이어질 수 있었음.
+// 그래서 이제 'seeked'와 rVFC를 동시에 듣다가 둘 중 먼저 오는 신호로 바로 진행하도록 바꿔서,
+// 한쪽이 특정 기기에서 느리거나 안 오더라도 다른 쪽이 대신 신호를 줄 수 있게 함(레이스 방식).
+function seekTo(t){
+  return new Promise(resolve=>{
+    let done = false;
+    function finish(){
+      if(done) return;
+      done = true;
+      video.removeEventListener('seeked', onSeeked);
+      resolve();
+    }
+    function onSeeked(){ finish(); }
+    video.addEventListener('seeked', onSeeked);
+    if(typeof video.requestVideoFrameCallback === 'function'){
+      video.requestVideoFrameCallback(()=>finish());
+    }
+    video.currentTime = t;
+    // 'seeked'도 rVFC 콜백도 안 오는 드문 경우(목표 시점이 현재와 거의 같아 새 프레임이 없는 등)를
+    // 대비한 안전판. 모바일 디코딩 지연을 감안하되, 프레임 하나가 몇 초씩 잡아먹지 않도록 상한을 둠.
+    setTimeout(finish, 800);
+  });
+}
+
+// seek 신호가 온 뒤에도 프레임이 실제로 화면에 그려질 준비가 안 됐을 수 있어(특히 모바일),
+// readyState가 HAVE_CURRENT_DATA 이상이 될 때까지 짧게 몇 번 더 대기. startAnalysisPass의
+// 재탐색(재시도) 루프에서 매번 같은 대기 절차를 반복 호출하기 위해 별도 함수로 뺌.
+async function seekAndWait(target){
+  await seekTo(target);
+  for(let waitTries=0; waitTries<5 && video.readyState < 2; waitTries++){
+    await new Promise(r=>setTimeout(r, 50));
+  }
+}
+
+async function startAnalysisPass(){
+  analyzing = true;
+  video.controls = false; // 분석 중 사용자가 재생바를 건드려 프레임 캡처가 꼬이는 것을 방지
+  video.pause();
+  const duration = video.duration || 0;
+  const dt = 1/SAMPLE_FPS;
+  let t = 0;
+  while(t <= duration){
+    const target = Math.min(t, duration);
+    await seekAndWait(target);
+    // 'seeked'/rVFC 신호가 왔다고 해서 화면이 실제로 목표 시각(target)까지 도달했다는
+    // 보장은 없다(모바일은 특히 이 신호가 실제 디코딩 완료보다 먼저 오는 경우가 있음 - 아래
+    // computeFrameMetrics 호출부 주석 참고). video.currentTime을 그대로 프레임 시각으로
+    // 쓰기로 한 이상, 이 어긋남을 방치하면 이번엔 "값은 정직하지만 목표했던 시각 근처를
+    // 거의 못 훑고 훨씬 이전 화면만 반복 분석하는" 문제로 이어질 수 있다(실제로 모바일에서
+    // 전체 동작이 원래보다 훨씬 이른 시각대로 통째로 압축돼 나오는 증상으로 나타남).
+    // 그래서 실제 도달 시각이 목표와 1.5프레임 이상 차이 나면, 같은 목표로 몇 번 더
+    // 재탐색을 시도해서 실제로 목표 근처까지 따라잡은 뒤에야 그 프레임을 채택한다.
+    const SEEK_TOLERANCE = dt * 1.5;
+    let seekRetries = 0;
+    while(Math.abs(video.currentTime - target) > SEEK_TOLERANCE && target < duration - 0.001 && seekRetries < 4){
+      seekRetries++;
+      await seekAndWait(target);
+    }
+    // 진단 카운터 - 인식이 거의 안 되는 실패 사례를 제보받았을 때, "포즈를 아예 못 찾은 것"과
+    // "애초에 seek/디코딩이 이 기기/영상에서 정상 동작을 안 한 것"을 구분하기 위해 기록해둔다.
+    analysisDiag.totalIterations++;
+    const seekGap = Math.abs(video.currentTime - target);
+    if(seekGap > SEEK_TOLERANCE) analysisDiag.seekMismatchCount++;
+    if(seekGap > analysisDiag.maxSeekGap) analysisDiag.maxSeekGap = seekGap;
+    if(video.readyState < 2) analysisDiag.readyStateFailCount++;
+    try{
+      // MediaPipe Tasks Vision(VIDEO 모드)은 프레임마다 넘기는 타임스탬프가 반드시
+      // '이전보다 커야' 한다. performance.now()가 브라우저 정밀도 제한으로 두 번
+      // 연속 같은 값을 줄 수 있는데, 그러면 내부에서 예외가 발생한다. 항상 이전 값보다
+      // 커지도록 보정.
+      let ts = performance.now();
+      if(ts <= lastDetectTs) ts = lastDetectTs + 1;
+      lastDetectTs = ts;
+      const result = poseLandmarker.detectForVideo(video, ts);
+      if(result.landmarks && result.landmarks.length>0){
+        const lm = smoothLandmarks(result.landmarks[0]);
+        // 중요: 프레임에 기록하는 시각은 '요청한' 탐색 지점(t)이 아니라 '실제로' 디코딩되어
+        // detectForVideo에 넘어간 화면(video.currentTime)이어야 한다. PC와 모바일에서 같은
+        // 영상을 분석해도 구간 판정·관절각이 계속 어긋나던 원인이 바로 이거였다: 모바일은
+        // 압축 영상을 키프레임부터 다시 디코딩해야 해서 seek 지연이 PC보다 훨씬 크고(주석 참고),
+        // 'seeked'/rVFC가 응답한 시점에도 실제 화면이 목표 시각 t에 정확히 도달했다는 보장이 없다.
+        // 그런데도 지금까지는 실제로 분석한 화면이 몇 프레임 전 화면이어도 그걸 목표 시각 t로
+        // 그대로 라벨링해왔다 - 그러면 같은 기기 안에서는 매번 같은 방식으로 어긋나서 일관되게
+        // 재현되지만(모바일-모바일, PC-PC 간 차이 없음이 여기서 설명됨), 기기마다 디코딩 지연이
+        // 달라서 PC와 모바일 사이에서는 라벨과 실제 화면의 어긋난 정도 자체가 달라져 시점과
+        // 관절각이 계속 다르게 나왔던 것. video.currentTime을 그대로 쓰면, 실제로 분석된 화면과
+        // 그 화면에 붙는 시각표가 항상 일치하게 되어 이 어긋남이 사라진다.
+        const actualT = video.currentTime;
+        // frames[] 배열은 재생 중 다시보기(nearestFrame의 이분 탐색)와 구간 자동 감지 둘 다
+        // "시간 순으로 정렬돼 있다"는 전제로 동작한다. video.currentTime을 그대로 쓰기로 한
+        // 이상, seek이 아주 불안정한 기기(재시도를 다 써도 목표에 못 미치거나, 반대로 재시도
+        // 중에 다음 반복의 목표보다 더 앞질러 도착하는 등)에서는 아주 드물게 이번 프레임의
+        // 실제 도달 시각이 바로 직전에 저장해둔 프레임의 시각보다 같거나 더 이를 수 있다.
+        // 이 경우를 그대로 저장하면 배열이 시간순이 아니게 되어 이분 탐색이 엉뚱한 인덱스를
+        // 돌려주고, 그러면 다시보기 중 스켈레톤이 지금 화면과 전혀 다른 순간의 자세로
+        // 그려져서 관절선이 다 풀린 것처럼 보이는 문제로 이어진다. 그래서 시간이 실제로
+        // 앞으로 나아간 프레임만 채택하고, 그렇지 않은 프레임은 (분석 자체는 정상이었더라도)
+        // 버려서 배열의 시간순 정렬을 항상 보장한다.
+        const lastPushedT = frames.length ? frames[frames.length-1].t : -Infinity;
+        if(actualT > lastPushedT){
+          frames.push(computeFrameMetrics(lm, actualT));
+        }
+        drawSkeleton(lm);
+      } else if(!blankFrameChecked){
+        // 사람을 못 찾은 첫 프레임에서, 화면 자체가 비어있는지(코덱을 브라우저가 못 읽어
+        // 까맣게/단색으로 나오는 경우 등) 딱 한 번만 확인해둠. 조명이 어둡거나 구도가 안 맞는
+        // 경우와 코덱 문제를 구분해서, 나중에 더 정확한 안내 메시지를 보여주기 위함.
+        blankFrameChecked = true;
+        try{
+          const probe = document.createElement('canvas');
+          probe.width = 32; probe.height = 32;
+          const pctx = probe.getContext('2d');
+          pctx.drawImage(video, 0, 0, 32, 32);
+          const d = pctx.getImageData(0, 0, 32, 32).data;
+          let sum=0, sumSq=0; const n=d.length/4;
+          for(let i=0;i<d.length;i+=4){ const l=(d[i]+d[i+1]+d[i+2])/3; sum+=l; sumSq+=l*l; }
+          const mean = sum/n, variance = sumSq/n - mean*mean;
+          if(variance < 4) possibleDecodeIssue = true; // 거의 단색 화면 - 디코딩이 안 됐을 가능성
+        }catch(probeErr){ /* 캔버스 드로잉 자체가 막혀도 그냥 넘어감 - 이 확인은 보조 정보일 뿐 */ }
+      }
+    }catch(frameErr){
+      // 팔다리가 겹치는 등 특정 시점에서 인식이 꼬여 오류가 나도, 그 지점만 건너뛰고
+      // 나머지 영상은 계속 분석되도록 함
+      console.warn('프레임 분석 중 오류, 이 지점은 건너뜁니다:', frameErr);
+    }
+    const pct = Math.min(100, (t/(duration||1))*100);
+    progressFill.style.width = pct.toFixed(0)+'%';
+    progressLabel.textContent = `분석 중... ${pct.toFixed(0)}% (${frames.length} 프레임 캡처)`;
+    t += dt;
+  }
+  finishAnalysis();
+}
+
+function computeFrameMetrics(lm, t){
+  const LS=lm[IDX.LS],RS=lm[IDX.RS],LH=lm[IDX.LH],RH=lm[IDX.RH],LK=lm[IDX.LK],RK=lm[IDX.RK];
+  const LA=lm[IDX.LA],RA=lm[IDX.RA],LW=lm[IDX.LW],RW=lm[IDX.RW],LE=lm[IDX.LE],RE=lm[IDX.RE];
+  const LF=lm[IDX.LFoot],RF=lm[IDX.RFoot];
+  const shoulder=mid(LS,RS), hip=mid(LH,RH), wrist=mid(LW,RW);
+  const kneeAngle = (angleAt(LH,LK,LA)+angleAt(RH,RK,RA))/2;
+  const hipAngle = (angleAt(LS,LH,LK)+angleAt(RS,RH,RK))/2;
+  const elbowAngle = (angleAt(LS,LE,LW)+angleAt(RS,RE,RW))/2;
+  const ankleAngle = (angleAt(LK,LA,LF)+angleAt(RK,RA,RF))/2;
+  const trunkAngle = angleFromVertical(shoulder, hip);
+  const shoulderWidth = Math.hypot(LS.x-RS.x, LS.y-RS.y) || 0.15;
+  return { t, wristY:wrist.y, wristX:wrist.x, hipY:hip.y, hipX:hip.x, shoulderY:shoulder.y,
+    elbowY:mid(LE,RE).y, kneeAngle, hipAngle, elbowAngle, ankleAngle, trunkAngle, shoulderWidth, lm };
+}
+
+// ---------- 분석 종료 후 처리 ----------
+function finishAnalysis(){
+  analyzing = false;
+  video.pause();
+  video.playbackRate = 1;
+  // 네이티브 <video controls>는 더 이상 켜지 않는다 - 대신 아래 커스텀 재생바(scrubBar)를
+  // 쓴다. 이유: 일부 PC(HDR/10비트 HEVC + 특정 그래픽 드라이버 조합)에서 <video> 자체의
+  // 화면 출력만 새까맣게 나오는 경우가 있는데, 그 문제를 우회하려고 캔버스에 영상 프레임을
+  // 직접 그리기 시작하면서(drawSkeleton 참고) 캔버스가 <video> 위를 완전히 덮게 됐다.
+  // 이 상태에서 네이티브 재생바를 켜두면 캔버스가 그 위에 그려져 재생바가 안 보이게
+  // 가려지므로, 처음부터 캔버스에 가려지지 않는 별도 HTML 재생바를 쓰기로 했다.
+  scrubBar.disabled = false;
+  playPauseBtn.disabled = false;
+  video.currentTime = 0;
+  progressFill.style.width='100%';
+
+  // 영상 재생/다시보기/재생바는 아래 구간 분석이 실패하더라도 항상 동작해야 하므로
+  // 프레임 개수와 상관없이 먼저 연결해둔다 (예전엔 프레임이 적으면 아래에서 바로
+  // return 해버려서 재생 버튼 자체가 연결되지 않는 문제가 있었음).
+  setupPlaybackReview();
+  drawSkeletonAtTime(0);
+
+  if(frames.length < 10){
+    if(possibleDecodeIssue){
+      progressLabel.textContent = `분석은 끝났지만 인식된 프레임이 너무 적습니다 (${frames.length}개). 화면이 거의 단색으로 보여서, 이 브라우저가 영상 코덱을 제대로 재생하지 못하고 있을 가능성이 커요. 아이폰 기본 촬영 형식(HEVC/H.265)은 일부 PC 브라우저(특히 Windows용 Chrome)에서 재생 버튼은 눌리는데 실제 화면은 안 나오는 경우가 있어요. 아이폰이라면 설정 > 카메라 > 포맷을 "높은 호환성"으로 바꿔서 다시 촬영하거나, 영상을 mp4(H.264)로 변환해서 다시 올려보세요.`;
+    } else {
+      progressLabel.textContent = `분석은 끝났지만 인식된 프레임이 너무 적습니다 (${frames.length}개). 자동 구간 감지와 피드백은 만들 수 없지만, 영상 재생과 재생바로 관절 표시는 확인하실 수 있어요. 전신이 잘 보이는 영상, 또는 밝은 곳에서 다시 촬영해보시면 개선될 수 있어요.`;
+    }
+    failDiagBtn.style.display = 'inline-block'; // 인식이 거의 안 된 원인을 추적할 수 있게 진단 데이터를 내려받을 수 있게 함
+    return;
+  }
+
+  progressLabel.textContent = `분석 완료: 총 ${frames.length} 프레임`;
+
+  try{
+    detectEvents();
+    detectJerkEvents(); // 저크 구간은 항상 미리 계산해둠 (탭을 클린&저크로 바꿀 때 재분석 없이 바로 표시하기 위해)
+    renderChart();
+    renderCheckpointTable();
+    renderFeedback();
+    setupJumpButtons();
+    saveHistoryBtn.disabled = false; // 구간 감지가 성공해야 저장할 만한 요약이 생기므로 여기서만 활성화
+    renderHistory();
+    chartCard.style.display='block';
+    tableCard.style.display='block';
+    feedbackCard.style.display='block';
+  }catch(err){
+    console.warn('결과 렌더링 중 오류:', err);
+    // 무슨 오류인지 화면에서 바로 알 수 있도록 실제 에러 메시지를 노출 (디버깅에 필요)
+    progressLabel.textContent = `구간 분석 중 오류가 발생했습니다: ${err.message}. 영상 재생/재생바로 직접 확인해주세요.`;
+  }
+}
+
+// 프레임 i 기준, 실제로 sec초(또는 그 이상) 이전인 가장 가까운 프레임의 인덱스.
+// frames[] 배열의 저장 간격이 항상 1/SAMPLE_FPS로 균일하다고 가정할 수 없어서 이 함수를 쓴다:
+// 모바일에서는 seek 정밀도가 낮아 서로 다른 목표 시각이 같은 실제 화면으로 디코딩되는 경우가
+// PC보다 훨씬 잦고, 그런 '중복 시각' 프레임은 시간순 정렬을 지키기 위해 배열에 아예 실리지
+// 않는다(startAnalysisPass 참고). 그 결과 같은 12.5초 영상인데도 PC는 376프레임이 0.0333초
+// 간격으로 고르게 찍히는 반면, 모바일은 307프레임이 0.0333~0.0667초로 들쭉날쭉하게 찍히는
+// 식으로 저장 간격이 기기마다 달라진다. 아래 detectEvents/detectJerkEvents가 예전처럼 '프레임
+// 개수'(예: 3프레임 전)로 창을 잡으면, 그 3프레임이 가리키는 실제 시간 폭이 기기마다 달라져서
+// 똑같은 영상에서도 전혀 다른 시점을 '드라이브 시작'처럼 잘못 짚게 된다(실제 사례: 랙을 들고
+// 버티는 구간에서 프레임이 드문드문 빠진 탓에 3프레임 전이 실제로는 0.1초가 아니라 그보다 훨씬
+// 이전을 가리켜, 완만한 자세 재조정이 마치 폭발적인 속도로 보여 저크 드라이브가 실제보다
+// 2초 넘게 일찍 잘못 감지됨). 그래서 프레임 개수 대신 항상 '실제 경과 시간'으로 창을 잡는다.
+function backIdxSec(frames, i, sec){
+  let j = i;
+  while(j > 0 && (frames[i].t - frames[j-1].t) < sec) j--;
+  return j;
+}
+// backIdxSec의 반대 방향(앞으로 sec초 이내의 가장 먼 프레임) - 정밀 보정용 국소 탐색 범위를
+// 잡을 때 쓴다.
+function fwdIdxSec(frames, i, sec){
+  const n = frames.length;
+  let j = i;
+  while(j < n-1 && (frames[j+1].t - frames[i].t) <= sec) j++;
+  return j;
+}
+// 프레임 i에서의 완만화된 기울기 (winSec초 전과 비교) - 노이즈에 강한 방향 판정용
+function smoothDerivT(frames, arr, i, winSec){
+  const j = backIdxSec(frames, i, winSec);
+  return arr[i]-arr[j];
+}
+// i를 끝점으로 runSec초 구간 전체에서 pred(k)가 계속 성립하는지 확인.
+// 그 구간을 실제로 커버할 만큼 이전 프레임이 아직 쌓이지 않았으면(영상 시작 직후 등) 판정을
+// 보류한다(null) - 그래야 프레임이 드문 구간에서 표본 1~2개만으로 성급하게 전환점을 확정하지 않는다.
+function runStartIfAllTrue(frames, i, runSec, pred){
+  const runStart = backIdxSec(frames, i, runSec);
+  if(frames[i].t - frames[runStart].t < runSec*0.5) return null;
+  for(let k=runStart;k<=i;k++){ if(!pred(k)) return null; }
+  return runStart;
+}
+
+// i시점에서 winSec초 전 대비 vals가 어깨너비 대비 ratioThresh 이상 빠르게 움직였는지 확인하되,
+// 딱 그 프레임 하나만 보고 판단하지 않는다. 포즈 인식이 순간적으로 손목을 잘못 짚는 잡음이
+// (특히 모바일에서 촬영/재인코딩 화질 차이로 인해 PC보다 더 크게) 실제로 발생했는데, 잡음이
+// 원래대로 되돌아오는 그 '복귀' 움직임 자체가 마치 폭발적인 상승처럼 보여서 이 함수를 쓰는
+// 이륙/드라이브 감지가 그 순간을 오탐했던 적이 있다(같은 12.5초 영상을 PC/모바일 각각 분석했을
+// 때, 모바일에서만 드라이브가 실제보다 2초 넘게 일찍 잡힘 - 랙 홀드 중 손목이 잠깐 흔들렸다가
+// 제자리로 돌아오는 구간이었음). 처음엔 그 다음 지점에서 절반 정도의 속도만 유지돼도 인정했는데,
+// 잡음이 되돌아오는 움직임도 되돌아오는 도중에는 잠깐 그 정도 속도가 남아있어서 여전히
+// 걸러지지 않는 경우가 있었다(반쯤 튕겨 나갔다가 서서히 멈추는 모양). 그래서 다음 지점에서도
+// 처음과 같은 '완전한' 기준을 다시 통과해야만 인정하도록 강화했다 - 잡음성 복귀는 빠르게
+// 잦아들지만, 진짜 폭발적인 동작은 계속 이어지거나 오히려 더 빨라지므로 이 기준을 그대로
+// 통과한다.
+function sustainedVelocityAt(frames, vals, i, winSec, ratioThresh){
+  const j = backIdxSec(frames, i, winSec);
+  const v = vals[j] - vals[i];
+  const sw = frames[i].shoulderWidth || 0.15;
+  if(v/sw <= ratioThresh) return false;
+  const confirmIdx = fwdIdxSec(frames, i, winSec);
+  if(confirmIdx <= i) return true; // 뒤에 더 확인할 프레임이 없으면(영상 끝자락) 그냥 인정
+  const cj = backIdxSec(frames, confirmIdx, winSec);
+  const cv = vals[cj] - vals[confirmIdx];
+  const csw = frames[confirmIdx].shoulderWidth || 0.15;
+  return (cv/csw) > ratioThresh;
+}
+
+function detectEvents(){
+  const n = frames.length;
+  const hipY = frames.map(f=>f.hipY);
+  const wristY = frames.map(f=>f.wristY);
+  // RUN_SEC초 동안 계속 같은 방향이어야 '전환점'으로 인정 (잡음 방지). 예전엔 이게 프레임
+  // 개수(WIN=3, RUN=4)였는데, 위 backIdxSec 설명대로 저장 간격이 기기마다 달라 같은 '4프레임'이
+  // 서로 다른 실제 시간 폭을 가리키는 문제가 있었다 - 그래서 시간(초) 자체를 기준으로 삼는다.
+  const WIN_SEC = NOMINAL_DT*3, RUN_SEC = NOMINAL_DT*4;
+
+  // 1) 이륙: 손목이 지속적으로 상승 시작하는 첫 지점 (어깨너비 대비 속도로 판단해 촬영 거리에 안정적)
+  let liftoff = 0;
+  for(let i=1;i<n;i++){
+    if(frames[i].t < WIN_SEC) continue; // 아직 비교할 만큼 과거 프레임이 없음
+    if(sustainedVelocityAt(frames, wristY, i, WIN_SEC, TUNE.LIFTOFF_VEL_RATIO*3)){ liftoff = i; break; }
+  }
+
+  // 2) 트리플 익스텐션: 이륙 이후 엉덩이가 계속 올라가다(hipY 감소) 처음으로
+  //    지속적으로 내려가기(hipY 증가) 시작하는 전환점. 당김 속도 곡선 모양에
+  //    의존하지 않아 사람마다 다른 가속 패턴에도 안정적으로 동작함.
+  let extTurn = null;
+  for(let i=liftoff+1; i<n; i++){
+    if(frames[i].t - frames[liftoff].t < WIN_SEC+RUN_SEC) continue;
+    const runStart = runStartIfAllTrue(frames, i, RUN_SEC, k=>smoothDerivT(frames,hipY,k,WIN_SEC) > 0);
+    if(runStart!=null){ extTurn = runStart; break; }
+  }
+  if(extTurn==null) extTurn = liftoff + Math.floor((n-liftoff)*0.4); // 감지 실패시 대략적 위치로 대체
+
+  // 전환점 부근에서 (엉덩이+무릎+발목각) 합이 최대인 프레임으로 정밀 보정
+  let extIdx = extTurn, extScore = -Infinity;
+  const lo = Math.max(liftoff, backIdxSec(frames, extTurn, 8*NOMINAL_DT)), hi = Math.min(n-1, fwdIdxSec(frames, extTurn, 4*NOMINAL_DT));
+  for(let i=lo;i<=hi;i++){
+    const score = frames[i].hipAngle+frames[i].kneeAngle+frames[i].ankleAngle;
+    if(score > extScore){ extScore = score; extIdx = i; }
+  }
+
+  // 3) 캐치: 익스텐션 이후 엉덩이가 계속 내려가다(hipY 증가) 처음으로
+  //    지속적으로 다시 올라가기(hipY 감소, 회복 시작) 시작하는 전환점
+  let catchTurn = null;
+  for(let i=extIdx+1; i<n; i++){
+    if(frames[i].t - frames[extIdx].t < WIN_SEC+RUN_SEC) continue;
+    const runStart = runStartIfAllTrue(frames, i, RUN_SEC, k=>smoothDerivT(frames,hipY,k,WIN_SEC) < 0);
+    if(runStart!=null){ catchTurn = runStart; break; }
+  }
+  if(catchTurn==null) catchTurn = Math.min(n-1, extIdx + Math.round(n*0.2));
+
+  // 전환점 부근에서 엉덩이가 가장 낮은(hipY 최대) 프레임으로 정밀 보정
+  let catchIdx = catchTurn, bestY = -Infinity;
+  const lo2 = Math.max(extIdx, backIdxSec(frames, catchTurn, 4*NOMINAL_DT)), hi2 = Math.min(n-1, fwdIdxSec(frames, catchTurn, 8*NOMINAL_DT));
+  for(let i=lo2;i<=hi2;i++){
+    if(hipY[i] > bestY){ bestY = hipY[i]; catchIdx = i; }
+  }
+
+  // 4) 회복 완료: 캐치 이후 엉덩이가 가장 높이(hipY 최소) 올라간 지점.
+  //    클린&저크처럼 회복 이후 저크 딥이 곧바로 이어지는 영상에서는, 딥이 다시 시작되는 지점
+  //    (hipY가 지속적으로 다시 증가하기 시작하는 전환점) 이후는 탐색 범위에서 제외해야
+  //    뒤이은 저크 드라이브의 더 높은 신전 정점을 회복 지점으로 잘못 고르지 않는다.
+  //    그런 전환점이 없으면(클린/스내치만 촬영된 일반적인 영상) 예전처럼 끝까지 탐색한다.
+  //
+  //    스쿼트 클린(깊게 앉아서 받는 캐치)에서 실제로 발생했던 버그: 무거운 무게를 깊은
+  //    스쿼트에서 받아내는 순간, 몸이 흡수 충격으로 아주 살짝 재조정되는 짧은 흔들림이
+  //    있을 수 있다. 이 흔들림이 우연히 RUN_SEC초 내내 hipY가 미세하게 다시
+  //    증가하는 패턴처럼 보이면, 실제로는 거의 일어나지도 못한 캐치 직후 시점을 '회복
+  //    완료(stand)'로 잘못 확정해버렸다. 그러면 그 뒤에 이어지는 진짜 스쿼트 클린 기립
+  //    동작 전체가 (이미 회복은 끝났다고 착각한 채) '회복 이후' 구간으로 취급되고, 그
+  //    기립 동작 자체의 손목 상승 속도가 저크 드라이브 속도 기준을 넘기면서 저크 딥/
+  //    드라이브로 잘못 인식됐다(캐치 자세가 딥으로, 일어서는 동작이 드라이브로 오판되는
+  //    증상). 그래서 캐치 지점 대비 어깨너비의 일정 비율만큼 실제로 일어나기 전까지는,
+  //    '재하강 전환점(다시 앉기 시작함)'을 찾는 탐색 자체를 시작하지 않도록 최소 회복
+  //    진행량 기준을 추가함 - 사소한 흔들림은 이 기준을 넘길 만큼 크지 않다.
+  const RECOVERY_MIN_RATIO = 0.3; // 캐치 대비 이만큼(어깨너비 비율) 이상 실제로 일어나야 '회복 진행 중'으로 인정
+  let standTurn = null;
+  let runningMinHipY = hipY[catchIdx];
+  for(let i=catchIdx+1; i<n; i++){
+    if(hipY[i] < runningMinHipY) runningMinHipY = hipY[i];
+    if(frames[i].t - frames[catchIdx].t < WIN_SEC+RUN_SEC) continue;
+    const swAtI = frames[i].shoulderWidth || 0.15;
+    const recovered = (hipY[catchIdx] - runningMinHipY) / swAtI;
+    if(recovered < RECOVERY_MIN_RATIO) continue; // 아직 충분히 일어나지 못했으면 재하강 전환점 탐색을 건너뜀
+    const runStart = runStartIfAllTrue(frames, i, RUN_SEC, k=>smoothDerivT(frames,hipY,k,WIN_SEC) > 0);
+    if(runStart!=null){ standTurn = runStart; break; }
+  }
+  const standSearchEnd = standTurn!=null ? standTurn : n-1;
+  let standIdx = catchIdx, standY = Infinity;
+  for(let i=catchIdx;i<=standSearchEnd;i++){
+    if(hipY[i] < standY){ standY = hipY[i]; standIdx = i; }
+  }
+
+  events = { liftoff, ext: extIdx, catch: catchIdx, stand: standIdx };
+}
+
+// ---------- 클린 & 저크: 저크(딥-드라이브-캐치-회복) 구간 검출 ----------
+// 예전 버전은 엉덩이 높이(hipY)의 전환점 크기(진폭)만으로 '진짜 동작 vs 랙 홀드 중 흔들림'을
+// 구분하려 했는데, 실전 영상에서는 무거운 무게를 랙 자세로 버티는 동안의 몸통 흔들림/자세
+// 재조정이 진폭 기준을 그대로 통과할 만큼 클 수 있어서(사람마다, 무게마다 다름) 여전히 랙 홀드
+// 구간을 딥/드라이브/캐치로 잘못 짚는 문제가 있었다.
+// 진폭 대신 '속도'로 구분하는 게 훨씬 안전하다: 드라이브(다리로 바를 폭발적으로 밀어 올리는 순간)는
+// 랙을 들고 버티는 동안의 어떤 자세 흔들림보다도 훨씬 빠르다. 클린의 '이륙'을 찾을 때도 정확히
+// 같은 원리(손목이 프레임당 일정 속도 이상으로 빠르게 상승하는 지점)를 쓰고 있고 그건 잘 동작하고
+// 있으니, 저크 드라이브도 같은 방식으로 먼저 확정한 뒤 그 지점을 기준으로 앞뒤(딥/캐치)를 찾는다.
+// 이러면 느린 흔들림/재조정은 애초에 후보에 걸리지 않고, 진짜 폭발적인 드라이브가 나올 때까지
+// 계속 넘어간다.
+const DRIVE_VEL_RATIO = TUNE.LIFTOFF_VEL_RATIO; // 드라이브도 클린 이륙만큼(또는 그 이상) 폭발적인 움직임이라 같은 기준 재사용 (연구 근거 없음, 추정치 - 실제 영상으로 다듬을 수 있음)
+
+function detectJerkEvents(){
+  events.dip = events.drive = events.jerkCatch = events.jerkStand = null;
+  const standIdx = events.stand;
+  const n = frames.length;
+  if(standIdx==null || n - standIdx < 15) return; // 저크를 볼 만큼 남은 프레임이 부족
+
+  const hipY = frames.map(f=>f.hipY);
+  const wristY = frames.map(f=>f.wristY);
+  const WIN_SEC = NOMINAL_DT*3, RUN_SEC = NOMINAL_DT*4; // detectEvents와 동일한 이유로 프레임 개수 대신 시간(초) 기준
+
+  // 1) 드라이브 시작: 회복 이후 손목(바)이 클린 이륙 때만큼 빠르게 상승하기 시작하는 지점
+  //    (어깨너비 대비 속도 - 촬영 거리가 달라도 안정적으로 같은 기준이 적용됨).
+  //    랙을 들고 버티는 동안의 느린 흔들림/자세 재조정은 이 속도에 못 미쳐서 자동으로 걸러진다.
+  let driveStart = null;
+  for(let i=standIdx+1; i<n; i++){
+    if(frames[i].t - frames[standIdx].t < WIN_SEC) continue;
+    if(sustainedVelocityAt(frames, wristY, i, WIN_SEC, DRIVE_VEL_RATIO*3)){ driveStart = i; break; }
+  }
+  if(driveStart==null) return; // 폭발적인 드라이브 구간을 못 찾음 - 저크가 없거나(클린만 촬영) 감지 실패
+
+  // 2) 딥 바닥: 드라이브가 시작되기 직전 구간에서 엉덩이가 가장 낮았던(hipY 최대) 지점.
+  //    이미 '진짜 드라이브'로 확정된 지점 바로 앞만 보기 때문에, 그보다 훨씬 전에 있었을 수 있는
+  //    랙 홀드 흔들림이 딥으로 잘못 잡히지 않는다.
+  const dipLo = Math.max(standIdx, backIdxSec(frames, driveStart, 20*NOMINAL_DT));
+  let dipIdx = dipLo, dipY = -Infinity;
+  for(let i=dipLo;i<driveStart;i++){ if(hipY[i] > dipY){ dipY = hipY[i]; dipIdx = i; } }
+
+  // 3) 드라이브 정점(다리 신전): 드라이브 시작 이후 (엉덩이+무릎+발목각) 합이 최대인 프레임
+  const driveHi = Math.min(n-1, fwdIdxSec(frames, driveStart, 15*NOMINAL_DT));
+  let driveIdx = driveStart, driveScore = -Infinity;
+  for(let i=driveStart;i<=driveHi;i++){
+    const score = frames[i].hipAngle+frames[i].kneeAngle+frames[i].ankleAngle;
+    if(score > driveScore){ driveScore = score; driveIdx = i; }
+  }
+
+  // 4) 저크 캐치: 드라이브 정점 이후 엉덩이가 계속 내려가다(hipY 증가) 처음으로 지속적으로
+  //    다시 올라가기(hipY 감소, 회복 시작) 시작하는 전환점 부근에서 엉덩이가 가장 낮은 프레임.
+  //    드라이브가 이미 확정된 뒤라 여기서부터는 예전 방식(전환점 탐지)으로도 충분히 안전하다.
+  let jcTurn = null;
+  for(let i=driveIdx+1; i<n; i++){
+    if(frames[i].t - frames[driveIdx].t < WIN_SEC+RUN_SEC) continue;
+    const runStart = runStartIfAllTrue(frames, i, RUN_SEC, k=>smoothDerivT(frames,hipY,k,WIN_SEC) < 0);
+    if(runStart!=null){ jcTurn = runStart; break; }
+  }
+  const jcApprox = jcTurn!=null ? jcTurn : Math.min(n-1, driveIdx + Math.round((n-driveIdx)*0.3));
+  let jerkCatchIdx = jcApprox, jcBestY = -Infinity;
+  const loJ = Math.max(driveIdx, backIdxSec(frames, jcApprox, 4*NOMINAL_DT)), hiJ = Math.min(n-1, fwdIdxSec(frames, jcApprox, 8*NOMINAL_DT));
+  for(let i=loJ;i<=hiJ;i++){ if(hipY[i] > jcBestY){ jcBestY = hipY[i]; jerkCatchIdx = i; } }
+
+  // 5) 저크 회복 완료: 캐치 이후 엉덩이가 가장 높이(hipY 최소) 올라간 지점
+  let jerkStandIdx = jerkCatchIdx, jsY = Infinity;
+  for(let i=jerkCatchIdx;i<n;i++){ if(hipY[i] < jsY){ jsY = hipY[i]; jerkStandIdx = i; } }
+
+  events.dip = dipIdx; events.drive = driveIdx; events.jerkCatch = jerkCatchIdx; events.jerkStand = jerkStandIdx;
+}
+
+// 저크 캐치 시점의 앞뒤 발(x축) 간격/어깨너비 비율로 스플릿 저크인지 파워(스쿼트) 저크인지 자동 판별 ([4])
+function classifyJerkCatch(idx){
+  if(idx==null || !frames[idx] || !frames[idx].lm) return null;
+  const lm = frames[idx].lm;
+  const ankleSep = Math.abs(lm[IDX.LA].x - lm[IDX.RA].x);
+  const sw = frames[idx].shoulderWidth || 0.15;
+  return (ankleSep / sw) > LIFT_TUNE.cleanjerk.SPLIT_DETECT_RATIO ? 'split' : 'power';
+}
+
+// 캐치 후 안정성 판정 - 착지 순간(catchIdx)은 바를 받아내며 몸을 빠르게 재배치하는 정상적인
+// 움직임이 있는 구간이라 그대로 흔들림으로 재면 안정적으로 받아도 오탐이 날 수 있어서,
+// (1) 착지 직후 몇 프레임은 측정 창에서 제외하고 (2) 가장 튄 프레임 1개씩(위/아래)을 뺀
+// 범위로 흔들림 폭을 잰다 - 포즈 인식 잡음으로 한 프레임만 순간적으로 튀어도 전체가 흔들림으로
+// 잡히지 않도록 함.
+function assessCatchStability(catchIdx){
+  // 프레임 개수(SETTLE_FRAMES/WINDOW_FRAMES) 대신 시간(초) 기준으로 창을 잡는다 - 다른 이유는
+  // detectEvents 위쪽의 backIdxSec 설명 참고 (저장 간격이 기기마다 들쭉날쭉할 수 있음).
+  const SETTLE_SEC = 3*NOMINAL_DT, WINDOW_SEC = 15*NOMINAL_DT, TRIM = 1;
+  const settleIdx = fwdIdxSec(frames, catchIdx, SETTLE_SEC);
+  const windowEndIdx = Math.min(frames.length-1, fwdIdxSec(frames, catchIdx, WINDOW_SEC));
+  const win = frames.slice(settleIdx, windowEndIdx+1);
+  if(win.length <= TRIM*2+1) return null; // 판단하기엔 남은 프레임이 너무 적음
+  const sw = frames[catchIdx].shoulderWidth || 0.15;
+  const sorted = win.map(f=>({x:f.hipX, t:f.t})).sort((a,b)=>a.x-b.x);
+  const trimmed = sorted.slice(TRIM, sorted.length-TRIM);
+  const minE = trimmed[0], maxE = trimmed[trimmed.length-1];
+  const range = (maxE.x - minE.x) / sw;
+  const centerX = win.reduce((s,f)=>s+f.hipX,0)/win.length;
+  const wobbleT = Math.abs(maxE.x-centerX) >= Math.abs(minE.x-centerX) ? maxE.t : minE.t;
+  return { range, wobbleT };
+}
+
+// ---------- 차트 (dataviz 스킬: 다크 카테고리컬 팔레트 재사용) ----------
+function renderChart(){
+  const n = frames.length;
+  const wristVals = frames.map(f=>1-f.wristY);
+  const hipVals = frames.map(f=>1-f.hipY);
+  const wMin=Math.min(...wristVals), wMax=Math.max(...wristVals);
+  const hMin=Math.min(...hipVals), hMax=Math.max(...hipVals);
+  const norm = (v,mn,mx)=> mx>mn ? (v-mn)/(mx-mn) : 0.5;
+
+  const PADL=8, PADR=8, PADT=14, PADB=22, W=640, H=220;
+  const plotW=W-PADL-PADR, plotH=H-PADT-PADB;
+  const x = i => PADL + (i/(n-1))*plotW;
+  const y = v => PADT + (1-v)*plotH;
+
+  const wristPath = wristVals.map((v,i)=>`${i===0?'M':'L'} ${x(i).toFixed(1)} ${y(norm(v,wMin,wMax)).toFixed(1)}`).join(' ');
+  const hipPath = hipVals.map((v,i)=>`${i===0?'M':'L'} ${x(i).toFixed(1)} ${y(norm(v,hMin,hMax)).toFixed(1)}`).join(' ');
+
+  // SVG 속성에는 CSS 변수 대신 실제 색상값을 사용 (모바일 브라우저 호환성)
+  const COL = { series1:'#3987e5', series2:'#d95926', grid:'#2c2c2a', axis:'#383835', muted:'#8fa1b3' };
+
+  let markers = '';
+  const evLabels = { liftoff:'이륙', ext:'익스텐션', catch:'캐치', dip:'딥', drive:'드라이브', jerkCatch:'저크캐치' };
+  const chartKeys = currentLift==='cleanjerk' ? ['liftoff','ext','catch','dip','drive','jerkCatch'] : ['liftoff','ext','catch'];
+  for(const key of chartKeys){
+    const idx = events[key];
+    if(idx==null) continue;
+    const px = x(idx);
+    markers += `
+      <line x1="${px}" y1="${PADT}" x2="${px}" y2="${H-PADB}" stroke="${COL.axis}" stroke-width="1" stroke-dasharray="3,3" />
+      <text x="${px}" y="${PADT-3}" font-size="9" fill="${COL.muted}" text-anchor="middle">${evLabels[key]}</text>
+    `;
+  }
+
+  chartSvg.innerHTML = `
+    <line x1="${PADL}" y1="${PADT+plotH*0.5}" x2="${W-PADR}" y2="${PADT+plotH*0.5}" stroke="${COL.grid}" stroke-width="1" />
+    <line x1="${PADL}" y1="${H-PADB}" x2="${W-PADR}" y2="${H-PADB}" stroke="${COL.axis}" stroke-width="1" />
+    ${markers}
+    <path d="${hipPath}" fill="none" stroke="${COL.series2}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+    <path d="${wristPath}" fill="none" stroke="${COL.series1}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+    <text x="${PADL}" y="${H-6}" font-size="9" fill="${COL.muted}">0s</text>
+    <text x="${W-PADR}" y="${H-6}" font-size="9" fill="${COL.muted}" text-anchor="end">${numOrDash(frames[n-1] && frames[n-1].t, 1)}s</text>
+    <circle id="hoverDot1" cx="0" cy="0" r="3.5" fill="${COL.series1}" style="display:none" />
+    <circle id="hoverDot2" cx="0" cy="0" r="3.5" fill="${COL.series2}" style="display:none" />
+  `;
+
+  // 호버 크로스헤어 + 툴팁 + 클릭하면 그 순간 영상으로 이동
+  const dot1 = chartSvg.querySelector('#hoverDot1');
+  const dot2 = chartSvg.querySelector('#hoverDot2');
+  function indexAtClientX(clientX){
+    const rect = chartSvg.getBoundingClientRect();
+    const relX = (clientX-rect.left)/rect.width;
+    return { i: Math.max(0, Math.min(n-1, Math.round(relX*(n-1)))), relX, rect };
+  }
+  // 모바일 터치는 마우스 호버가 없어서, 그래프를 짚어봐도 손가락을 뗄 때 딱 한 지점으로만 이동함 —
+  // PC처럼 커서를 움직이며 값을 훑어볼 방법이 없어 원하는 지점을 세밀하게 찾기 불편함. 그래서 터치로
+  // 드래그하는 동안에는(포인터 타입이 touch일 때) 손가락이 움직이는 프레임마다 영상도 그 순간으로
+  // 실시간으로 같이 이동시켜서, 그래프를 훑는 것 자체가 곧 영상을 스크럽하는 셈이 되게 함.
+  // (마우스는 원래 하는 대로 호버=툴팁만, 클릭해야 이동 — 매 마우스 이동마다 영상을 재탐색(seek)시키면
+  // 오히려 버벅이므로 그대로 둠)
+  let lastDragIdx = null;
+  function handleMove(clientX, isTouchDrag){
+    const { i, relX, rect } = indexAtClientX(clientX);
+    const px = x(i);
+    dot1.style.display='block'; dot2.style.display='block';
+    dot1.setAttribute('cx', px); dot1.setAttribute('cy', y(norm(wristVals[i],wMin,wMax)));
+    dot2.setAttribute('cx', px); dot2.setAttribute('cy', y(norm(hipVals[i],hMin,hMax)));
+    tooltip.style.display='block';
+    tooltip.style.left = Math.min(rect.width-120, Math.max(0,(relX*rect.width)+8))+'px';
+    tooltip.style.top = '4px';
+    const moveHint = isTouchDrag ? '손가락을 떼면 여기서 멈춰요' : '탭/클릭하면 이 순간으로 이동';
+    tooltip.innerHTML = `t=${numOrDash(frames[i] && frames[i].t, 2)}s<br>바 높이 ${numOrDash(norm(wristVals[i],wMin,wMax)*100,0)}%<br>엉덩이 높이 ${numOrDash(norm(hipVals[i],hMin,hMax)*100,0)}%<br><span style="color:var(--series-1)">${moveHint}</span>`;
+    if(isTouchDrag && i !== lastDragIdx){
+      lastDragIdx = i;
+      const f = frames[i];
+      if(f){ video.currentTime = f.t; drawSkeletonAtTime(f.t); }
+    }
+  }
+  chartSvg.addEventListener('pointermove', e=>handleMove(e.clientX, e.pointerType==='touch'));
+  chartSvg.addEventListener('pointerleave', ()=>{ tooltip.style.display='none'; dot1.style.display='none'; dot2.style.display='none'; lastDragIdx=null; });
+  chartSvg.addEventListener('click', e=>{
+    const { i } = indexAtClientX(e.clientX);
+    const f = frames[i];
+    if(f){ video.currentTime = f.t; drawSkeletonAtTime(f.t); }
+  });
+}
+
+// ---------- 체크포인트 표 ----------
+function renderCheckpointTable(){
+  const rows = [
+    ['이륙', events.liftoff], ['트리플 익스텐션', events.ext], ['캐치', events.catch], ['회복 완료', events.stand]
+  ];
+  if(currentLift==='cleanjerk'){
+    rows.push(['저크 딥', events.dip], ['드라이브', events.drive], ['저크 캐치', events.jerkCatch], ['저크 회복', events.jerkStand]);
+  }
+  checkTableBody.innerHTML = rows.map(([label, idx])=>{
+    if(idx==null || !frames[idx]) return `<tr><td>${label}</td><td colspan="4" style="color:var(--muted)">감지 실패</td></tr>`;
+    const f = frames[idx];
+    return `<tr><td>${label}</td><td class="num">${numOrDash(f.t,2)}s</td><td class="num">${numOrDash(f.hipAngle,0)}°</td><td class="num">${numOrDash(f.kneeAngle,0)}°</td><td class="num">${numOrDash(f.elbowAngle,0)}°</td></tr>`;
+  }).join('');
+}
+
+// ---------- 피드백 규칙 ----------
+function renderFeedback(){
+  const items = [];
+  const { liftoff, ext, catch: catchIdx } = events;
+  if(ext==null || liftoff==null){
+    items.push({level:'warn', text:'주요 구간을 자동으로 찾지 못했습니다. 영상 앵글이나 프레임레이트를 바꿔 다시 시도해보세요.'});
+    feedbackSummaryEl.innerHTML = '';
+    liveFeedbackEl.innerHTML = items.map(renderItem).join('');
+    lastFeedbackItems = []; // 구간 감지 자체가 실패한 경우엔 성장 기록에 의미 있게 남길 게 없음
+    return;
+  }
+  const f0 = frames[liftoff], fExt = frames[ext];
+
+  // 1) 바 경로 (이륙~익스텐션 구간 손목 x 드리프트) - 가장 많이 벗어난 '그 순간'을 찾아 클릭 이동에 사용
+  let maxDrift = 0, maxDriftIdx = liftoff;
+  const refX = f0.wristX, sw = f0.shoulderWidth;
+  for(let i=liftoff;i<=ext;i++){
+    const d = Math.abs(frames[i].wristX-refX);
+    if(d > maxDrift){ maxDrift = d; maxDriftIdx = i; }
+  }
+  const driftRatio = maxDrift/sw;
+  if(driftRatio > TUNE.BARPATH_BAD) items.push({level:'bad', jumpT:frames[maxDriftIdx].t,
+    text:`바 경로가 몸에서 많이 벗어났습니다 (${frames[maxDriftIdx].t.toFixed(2)}초 지점에서 어깨너비의 ${(driftRatio*100).toFixed(0)}%만큼 앞으로 흔들림).`,
+    tip:'추천 연습: 벽에 등을 살짝 대고 당기는 드릴, 또는 스내치/클린 그립 폭과 시작 자세(바가 정강이에 거의 닿는 위치)부터 다시 점검해보세요.',
+    video:VIDEO_TIPS.barpath});
+  else if(driftRatio > TUNE.BARPATH_WARN) items.push({level:'warn', jumpT:frames[maxDriftIdx].t,
+    text:`바 경로가 다소 몸에서 멀어집니다 (${frames[maxDriftIdx].t.toFixed(2)}초 지점이 가장 많이 벗어남).`,
+    tip:'추천 연습: 1차 당김 구간에서 바를 정강이 가까이 스치듯 끌어올리는 느낌으로 천천히 반복 연습해보세요.',
+    video:VIDEO_TIPS.barpath});
+  else items.push({level:'good', text:'바 경로: 몸에 가깝게 잘 유지됐어요 👍'});
+
+  // 2) 이른 팔 당김
+  let elbowBendIdx = null;
+  for(let i=liftoff;i<ext;i++){
+    if(frames[i].elbowAngle < TUNE.ELBOW_BEND_DEG){ elbowBendIdx=i; break; }
+  }
+  if(elbowBendIdx!=null && (ext-elbowBendIdx) > (ext-liftoff)*0.35){
+    const pullDrillName = currentLift==='snatch' ? '행 스내치 풀(hang snatch pull)' : '행 클린 풀(hang clean pull)';
+    items.push({level:'bad', jumpT:frames[elbowBendIdx].t,
+      text:`익스텐션이 끝나기 전, ${frames[elbowBendIdx].t.toFixed(2)}초 지점부터 팔꿈치가 벌써 ${frames[elbowBendIdx].elbowAngle.toFixed(0)}°로 굽혀지기 시작해요 (이른 팔 당김).`,
+      tip:`추천 연습: ${pullDrillName}이나 점프 슈러그처럼 팔을 쓰지 않고 다리·엉덩이 신전만으로 바를 끌어올리는 드릴을 반복해보세요.`,
+      video:VIDEO_TIPS.earlyArm});
+  } else {
+    items.push({level:'good', text:'팔 당김 타이밍: 신전 이후에 당겨져서 양호해요'});
+  }
+
+  // 3) 트리플 익스텐션 완성도 - 관절마다 '완전히 편' 상태의 기준각 자체가 다르므로(TUNE 주석 참고),
+  // 절대각을 그대로 비교하지 않고 각 관절을 "자기 기준(good~bad 구간) 대비 얼마나 부족한지" 비율로
+  // 환산해서 비교함 - 그래야 원래 덜 펴지는 관절(발목)이 매번 부당하게 '가장 문제'로 찍히지 않음.
+  const liftTune = LIFT_TUNE[currentLift];
+  const jointVals = [
+    {name:'엉덩이', v:fExt.hipAngle, good:liftTune.EXT_HIP_GOOD, bad:liftTune.EXT_HIP_BAD},
+    {name:'무릎', v:fExt.kneeAngle, good:liftTune.EXT_KNEE_GOOD, bad:liftTune.EXT_KNEE_BAD},
+    {name:'발목', v:fExt.ankleAngle, good:TUNE.EXT_ANKLE_GOOD, bad:TUNE.EXT_ANKLE_BAD},
+  ];
+  const jointBreakdown = jointVals.map(j=>`${j.name} ${numOrDash(j.v,0)}°`).join(', ');
+  const validJoints = jointVals.filter(j=>!Number.isNaN(j.v));
+  if(validJoints.length===0){
+    items.push({level:'warn', jumpT:fExt.t,
+      text:'익스텐션 순간 관절 각도를 충분히 인식하지 못했습니다. 아래 "이 순간 보기"로 직접 확인해주세요.'});
+  } else {
+    const deficits = validJoints.map(j=>({...j, deficit:(j.good-j.v)/(j.good-j.bad)}));
+    const worst = deficits.reduce((a,b)=> b.deficit>a.deficit ? b : a);
+    const extDrillName = currentLift==='snatch' ? '스내치 풀' : '클린 풀';
+    if(worst.deficit >= 1) items.push({level:'bad', jumpT:fExt.t,
+      text:`2차 당김에서 신전이 불완전합니다 (${jointBreakdown} — 특히 ${withEunGa(worst.name)} 기준(${worst.good}°)보다 많이 덜 펴졌어요).`,
+      tip:`추천 연습: ${extDrillName}이나 하이풀(high pull) 드릴로 엉덩이·무릎·발목을 완전히 편 뒤 마지막에 어깨를 으쓱(슈러그)하는 타이밍을 따로 반복해보세요.`,
+      video:VIDEO_TIPS.extension});
+    else if(worst.deficit > 0) items.push({level:'warn', jumpT:fExt.t,
+      text:`신전이 살짝 부족합니다 (${jointBreakdown} — ${withEunGa(worst.name)} 기준(${worst.good}°)에 가장 못 미쳐요).`,
+      tip:'추천 연습: 가벼운 무게로 익스텐션 구간만 과장해서 끝까지 펴는 느낌을 반복 연습해보세요.',
+      video:VIDEO_TIPS.extension});
+    else items.push({level:'good', jumpT:fExt.t, text:`트리플 익스텐션: 충분히 폈어요 👍 (${jointBreakdown})`});
+  }
+
+  if(catchIdx!=null && frames[catchIdx]){
+    const fCatch = frames[catchIdx];
+    // 4) 캐치 자세 - 클린은 프론트랙 팔꿈치 높이, 스내치는 오버헤드 락아웃(팔꿈치 신전) 확인
+    if(currentLift==='snatch'){
+      const lockoutAngle = fCatch.elbowAngle;
+      if(!Number.isNaN(lockoutAngle) && lockoutAngle < liftTune.LOCKOUT_ELBOW_BAD) items.push({level:'bad', jumpT:fCatch.t,
+        text:`캐치(${fCatch.t.toFixed(2)}초) 시 팔이 충분히 펴지지 않았습니다 (팔꿈치각 ${numOrDash(fCatch.elbowAngle,0)}° — 락아웃 부족).`,
+        tip:'추천 연습: 스냅다운(snap-down) 드릴이나 오버헤드 스쿼트 홀드로 팔을 완전히 펴서 바를 받는 감각을 반복해보세요. 어깨 유연성이 원인일 수도 있어요.',
+        video:VIDEO_TIPS.lockout});
+      else if(!Number.isNaN(lockoutAngle) && lockoutAngle < liftTune.LOCKOUT_ELBOW_GOOD) items.push({level:'warn', jumpT:fCatch.t,
+        text:`캐치 시 팔 락아웃이 살짝 부족합니다 (팔꿈치각 ${numOrDash(fCatch.elbowAngle,0)}°).`,
+        tip:'추천 연습: 가벼운 무게로 오버헤드 락아웃만 과장해서 끝까지 펴는 느낌을 반복 연습해보세요.',
+        video:VIDEO_TIPS.lockout});
+      else items.push({level:'good', jumpT:fCatch.t, text:'캐치 오버헤드 락아웃: 양호'});
+    } else {
+      const elbowDrop = fCatch.elbowY - fCatch.shoulderY;
+      if(elbowDrop > liftTune.CATCH_ELBOW_DROP) items.push({level:'bad', jumpT:fCatch.t,
+        text:`캐치(${fCatch.t.toFixed(2)}초) 시 팔꿈치가 낮습니다 (팔꿈치각 ${numOrDash(fCatch.elbowAngle,0)}°).`,
+        tip:'추천 연습: 프론트 스쿼트 자세로 바를 어깨 위에 걸고 팔꿈치를 앞으로 높이 드는 랙 포지션 홀드를 반복해보세요. 손목/어깨 유연성이 원인일 수도 있어요.',
+        video:VIDEO_TIPS.catchElbow});
+      else items.push({level:'good', jumpT:fCatch.t, text:'캐치 팔꿈치 높이: 양호'});
+    }
+
+    // 5) 캐치 시 상체 쏠림
+    const leanDelta = fCatch.trunkAngle - fExt.trunkAngle;
+    if(leanDelta > TUNE.LEAN_WARN_DEG) items.push({level:'warn', jumpT:fCatch.t,
+      text:`받는 자세에서 상체가 앞으로 쏠립니다 (익스텐션 때보다 +${leanDelta.toFixed(0)}° 더 숙여짐).`,
+      tip:'추천 연습: 코어 브레이싱을 강하게 잡고 프론트 스쿼트 홀드로 무게 아래에서 상체를 세우는 감각을 반복해보세요.',
+      video:VIDEO_TIPS.catchLean});
+    else items.push({level:'good', jumpT:fCatch.t, text:'캐치 상체 각도: 양호'});
+
+    // 6) 캐치 후 안정성
+    const stab = assessCatchStability(catchIdx);
+    if(stab){
+      if(stab.range > TUNE.STABILITY_WARN) items.push({level:'warn', jumpT:stab.wobbleT,
+        text:'받은 직후 화면상 수평 방향으로 흔들리는 것이 감지됐어요 (옆모습 촬영 시 앞뒤 흔들림, 정면 촬영 시 좌우 흔들림을 의미해요).',
+        tip:'추천 연습: 캐치 순간 발을 착지시키는 풋워크(스플릿 점프 드릴)와 오버헤드/프론트 스쿼트 상태에서 3초 버티기 같은 안정성 훈련을 해보세요.',
+        video:VIDEO_TIPS.stability});
+      else items.push({level:'good', jumpT:fCatch.t, text:'캐치 후 안정성: 양호'});
+    }
+
+    // 7) 캐치 깊이 정보성 코멘트
+    const powerLabel = currentLift==='snatch' ? '파워 스내치' : '파워 클린';
+    if(fCatch.kneeAngle > 150) items.push({level:'warn', jumpT:fCatch.t,
+      text:`무릎이 많이 펴진 채로(무릎각 ${fCatch.kneeAngle.toFixed(0)}°) 받았어요 (${powerLabel}에 가까운 얕은 캐치).`,
+      tip:'의도한 캐치가 아니라면, 신전 직후 빠르게 무릎을 굽혀 더 깊게 앉아 받는 풀 스쿼트 캐치를 연습해보세요.',
+      video:VIDEO_TIPS.shallowCatch});
+  }
+
+  // ---------- 클린 & 저크: 딥~드라이브~저크 캐치~회복 피드백 ----------
+  if(currentLift==='cleanjerk'){
+    const { dip, drive, jerkCatch, jerkStand } = events;
+    if(dip==null || drive==null || jerkCatch==null){
+      items.push({level:'warn', text:'저크 구간을 자동으로 찾지 못했습니다. 영상에 클린 이후 저크(딥·드라이브·캐치) 동작이 바로 이어서 담겨 있는지 확인해주세요.'});
+    } else {
+      const fDip = frames[dip], fDrive = frames[drive], fJC = frames[jerkCatch];
+      const jt = LIFT_TUNE.cleanjerk;
+
+      // 8) 저크 딥 깊이
+      if(!Number.isNaN(fDip.kneeAngle)){
+        if(fDip.kneeAngle > jt.DIP_KNEE_BAD) items.push({level:'bad', jumpT:fDip.t,
+          text:`저크 딥이 거의 없습니다 (딥 최저점 무릎각 ${fDip.kneeAngle.toFixed(0)}° — 거의 안 굽혀짐).`,
+          tip:'추천 연습: 빈 봉이나 가벼운 무게로 딥-드라이브만 반복하는 드릴로 일정한 딥 깊이를 몸에 익혀보세요.',
+          video:VIDEO_TIPS.jerkDip});
+        else if(fDip.kneeAngle > jt.DIP_KNEE_GOOD) items.push({level:'warn', jumpT:fDip.t,
+          text:`저크 딥이 다소 얕습니다 (딥 최저점 무릎각 ${fDip.kneeAngle.toFixed(0)}°).`,
+          tip:'추천 연습: 딥 구간에서 무릎이 발끝 방향을 유지한 채 일정한 깊이로 부드럽게 내려가는 느낌을 반복해보세요.',
+          video:VIDEO_TIPS.jerkDip});
+        else items.push({level:'good', jumpT:fDip.t, text:`저크 딥 깊이: 양호해요 (무릎각 ${fDip.kneeAngle.toFixed(0)}°)`});
+      }
+
+      // 9) 드라이브(다리 신전) 완성도 - 클린 트리플 익스텐션과 같은 부위별 가중 판정 로직 재사용
+      const driveJoints = [
+        {name:'엉덩이', v:fDrive.hipAngle, good:jt.EXT_HIP_GOOD, bad:jt.EXT_HIP_BAD},
+        {name:'무릎', v:fDrive.kneeAngle, good:jt.EXT_KNEE_GOOD, bad:jt.EXT_KNEE_BAD},
+        {name:'발목', v:fDrive.ankleAngle, good:TUNE.EXT_ANKLE_GOOD, bad:TUNE.EXT_ANKLE_BAD},
+      ];
+      const driveBreakdown = driveJoints.map(j=>`${j.name} ${numOrDash(j.v,0)}°`).join(', ');
+      const validDrive = driveJoints.filter(j=>!Number.isNaN(j.v));
+      if(validDrive.length>0){
+        const driveDeficits = validDrive.map(j=>({...j, deficit:(j.good-j.v)/(j.good-j.bad)}));
+        const worstDrive = driveDeficits.reduce((a,b)=> b.deficit>a.deficit ? b : a);
+        if(worstDrive.deficit >= 1) items.push({level:'bad', jumpT:fDrive.t,
+          text:`드라이브에서 다리 신전이 불완전합니다 (${driveBreakdown} — 특히 ${withEunGa(worstDrive.name)} 기준(${worstDrive.good}°)보다 많이 덜 펴졌어요).`,
+          tip:'추천 연습: 딥 이후 다리를 끝까지 펴는 타이밍에 집중하는 저크 드라이브 드릴을 반복해보세요.',
+          video:VIDEO_TIPS.jerkDip});
+        else if(worstDrive.deficit > 0) items.push({level:'warn', jumpT:fDrive.t,
+          text:`드라이브 신전이 살짝 부족합니다 (${driveBreakdown}).`,
+          tip:'추천 연습: 가벼운 무게로 드라이브 구간만 과장해서 다리를 끝까지 펴는 느낌을 반복해보세요.',
+          video:VIDEO_TIPS.jerkDip});
+        else items.push({level:'good', jumpT:fDrive.t, text:`드라이브 다리 신전: 충분해요 👍 (${driveBreakdown})`});
+      }
+
+      // 10) 저크 캐치 - 스플릿/파워 자동 판별 + 오버헤드 락아웃
+      const style = classifyJerkCatch(jerkCatch);
+      const styleLabel = style==='split' ? '스플릿 저크' : '파워/스쿼트 저크';
+      const lockoutAngle = fJC.elbowAngle;
+      if(!Number.isNaN(lockoutAngle)){
+        if(lockoutAngle < jt.LOCKOUT_ELBOW_BAD) items.push({level:'bad', jumpT:fJC.t,
+          text:`캐치(${styleLabel}로 감지됨, ${fJC.t.toFixed(2)}초) 시 팔이 충분히 펴지지 않았습니다 (팔꿈치각 ${numOrDash(lockoutAngle,0)}° — 락아웃 부족).`,
+          tip:'추천 연습: 프레스아웃 없이 팔을 순간적으로 완전히 펴서 바를 받는 저크 락아웃 드릴을 반복해보세요.',
+          video:VIDEO_TIPS.lockout});
+        else if(lockoutAngle < jt.LOCKOUT_ELBOW_GOOD) items.push({level:'warn', jumpT:fJC.t,
+          text:`캐치(${styleLabel}로 감지됨) 시 팔 락아웃이 살짝 부족합니다 (팔꿈치각 ${numOrDash(lockoutAngle,0)}°).`,
+          tip:'추천 연습: 가벼운 무게로 오버헤드 락아웃만 과장해서 반복 연습해보세요.',
+          video:VIDEO_TIPS.lockout});
+        else items.push({level:'good', jumpT:fJC.t, text:`캐치(${styleLabel}로 감지됨) 오버헤드 락아웃: 양호`});
+      }
+
+      // 11) 캐치 스타일별 참고 영상 (스플릿=스탠스 폭 점검, 파워/스쿼트=캐치 깊이 점검)
+      if(style==='split'){
+        items.push({level:'good', jumpT:fJC.t, text:'캐치 자세: 앞뒤로 발을 벌리는 스플릿 저크로 받았어요.',
+          tip:'스플릿 스탠스 폭이 안정적인지 궁금하다면 아래 영상으로 자신의 스탠스와 비교해보세요.',
+          video:VIDEO_TIPS.splitStance});
+      } else if(style==='power'){
+        items.push({level:'good', jumpT:fJC.t, text:'캐치 자세: 발을 앞뒤로 벌리지 않는 파워/스쿼트 저크로 받았어요.',
+          tip:'파워·스쿼트 저크는 캐치 깊이(스쿼트 깊이)가 특히 중요해요. 무게에 따라 충분히 앉아 받는지 점검해보세요.',
+          video:VIDEO_TIPS.powerJerkCatch});
+      }
+
+      // 12) 저크 캐치 후 안정성
+      const jstab = assessCatchStability(jerkCatch);
+      if(jstab){
+        if(jstab.range > TUNE.STABILITY_WARN) items.push({level:'warn', jumpT:jstab.wobbleT,
+          text:'저크 캐치 직후 수평 방향으로 흔들리는 것이 감지됐어요.',
+          tip:'추천 연습: 캐치 후 3초간 자세를 고정하는 홀드 드릴로 안정성을 길러보세요.',
+          video:VIDEO_TIPS.jerkStability});
+        else items.push({level:'good', jumpT:fJC.t, text:'저크 캐치 후 안정성: 양호'});
+      }
+    }
+  }
+
+  lastFeedbackItems = items; // 성장 기록 저장 버튼이 이번 판정 요약(양호/주의/개선 개수 등)에 쓸 수 있게 보관
+  renderSummary(items);
+  liveFeedbackEl.innerHTML = items.map(renderItem).join('');
+  if(!feedbackClickWired){
+    liveFeedbackEl.addEventListener('click', e=>{
+      const btn = e.target.closest('.jumpLink');
+      if(!btn) return;
+      const t = parseFloat(btn.dataset.t);
+      if(!Number.isNaN(t)){ video.currentTime = t; drawSkeletonAtTime(t); }
+    });
+    feedbackClickWired = true;
+  }
+}
+let feedbackClickWired = false;
+
+// ---------- 총평: 그래프·체크포인트·세부 피드백을 종합한 한 줄 요약 ----------
+function shortLabel(item){
+  // 세부 수치(괄호 안 내용)는 빼고 핵심 문장만 짧게
+  let s = item.text.split('(')[0].trim();
+  if(s.length > 26) s = s.slice(0,26) + '…';
+  return s;
+}
+function renderSummary(items){
+  const goodCount = items.filter(i=>i.level==='good').length;
+  const warnCount = items.filter(i=>i.level==='warn').length;
+  const badCount = items.filter(i=>i.level==='bad').length;
+
+  let headline;
+  const badItems = items.filter(i=>i.level==='bad');
+  const warnItems = items.filter(i=>i.level==='warn');
+  if(badCount>0){
+    headline = `🔴 가장 먼저 신경 쓰면 좋을 부분: ${badItems.map(shortLabel).join(', ')}`;
+  } else if(warnCount>0){
+    headline = `⚠️ 전반적으로 괜찮지만 다듬으면 좋을 부분: ${warnItems.map(shortLabel).join(', ')}`;
+  } else {
+    headline = '👍 뚜렷한 기술적 문제가 발견되지 않았어요. 좋은 폼을 유지하고 있어요!';
+  }
+
+  // 그래프(궤적)와 체크포인트 표 데이터를 종합한 보조 설명: 전체 템포
+  const { liftoff, ext, catch: catchIdx } = events;
+  let tempoText = '';
+  if(liftoff!=null && catchIdx!=null && frames[liftoff] && frames[catchIdx]){
+    const pullTime = frames[catchIdx].t - frames[liftoff].t;
+    tempoText = ` 이륙부터 캐치까지 약 ${pullTime.toFixed(2)}초가 걸렸어요.`;
+  }
+
+  // 체크포인트 표에서 인식이 자주 실패한 관절이 있으면(예: 발목) 신뢰도 참고사항으로 안내
+  const keys = ['liftoff','ext','catch','stand'];
+  const ankleMissing = keys.filter(k=>{
+    const idx = events[k], f = idx!=null ? frames[idx] : null;
+    return f && (f.ankleAngle===undefined || Number.isNaN(f.ankleAngle));
+  }).length;
+  const noteText = ankleMissing>=3
+    ? ' 참고: 발목 각도가 대부분 인식되지 않았어요 — 발이 프레임 안에 잘 들어오게 촬영하면 더 정확해질 수 있어요.'
+    : '';
+
+  feedbackSummaryEl.innerHTML = `
+    <div class="badges">
+      <span class="badge good">👍 양호 ${goodCount}</span>
+      <span class="badge warn">⚠️ 주의 ${warnCount}</span>
+      <span class="badge bad">🔴 개선 필요 ${badCount}</span>
+    </div>
+    <div class="headline">${headline}</div>
+    <div class="sub">위 궤적 그래프와 체크포인트 표, 아래 세부 피드백을 종합한 총평이에요.${tempoText}${noteText}</div>
+  `;
+}
+
+function renderItem(it){
+  const tipHtml = it.tip ? `<br><span style="color:var(--muted);font-size:12px;">${it.tip}</span>` : '';
+  const jumpHtml = (it.jumpT!=null) ? ` <button class="jumpLink" data-t="${it.jumpT}">▶ 이 순간 보기 (${it.jumpT.toFixed(2)}s)</button>` : '';
+  const videoHtml = it.video ? `<br><a class="videoLink" href="${videoUrl(it.video)}" target="_blank" rel="noopener">🎥 관련 영상: ${it.video.title}</a>` : '';
+  return `<div class="item"><span class="tag ${it.level}"></span><span>${it.text}${jumpHtml}${tipHtml}${videoHtml}</span></div>`;
+}
+
+// ---------- 구간 이동 버튼 ----------
+// 클린&저크를 선택했을 때는 클린 파트(이륙~회복) 버튼에 더해 저크 파트(딥~저크회복) 버튼도
+// 함께 보여줘야 하는데, 예전엔 이 목록이 클린/스내치 4개 구간으로 고정돼 있어서 클린&저크를
+// 선택해도 저크 구간으로 이동하는 버튼이 전혀 뜨지 않았다(차트의 점선 마커는 renderChart의
+// chartKeys처럼 lift별로 분기돼 있었는데, 이 함수만 분기가 빠져 있었음). renderChart와 동일하게
+// currentLift에 따라 키 목록을 분기하고, 동작(클린/스내치) 탭을 바꿀 때도 다시 호출되게 함.
+function setupJumpButtons(){
+  const labels = {
+    liftoff:'이륙으로 이동', ext:'익스텐션으로 이동', catch:'캐치로 이동', stand:'회복 완료로 이동',
+    dip:'저크 딥으로 이동', drive:'드라이브로 이동', jerkCatch:'저크 캐치로 이동', jerkStand:'저크 회복으로 이동',
+  };
+  const keys = currentLift==='cleanjerk'
+    ? ['liftoff','ext','catch','stand','dip','drive','jerkCatch','jerkStand']
+    : ['liftoff','ext','catch','stand'];
+  jumpRow.innerHTML = '';
+  for(const key of keys){
+    const idx = events[key];
+    if(idx==null || !frames[idx]) continue;
+    const btn = document.createElement('button');
+    btn.textContent = labels[key];
+    btn.addEventListener('click', ()=>{
+      video.currentTime = frames[idx].t;
+      drawSkeletonAtTime(frames[idx].t);
+    });
+    jumpRow.appendChild(btn);
+  }
+}
+
+// ---------- 재생 리뷰 (캐시된 랜드마크로 스켈레톤 재표시) ----------
+let timeupdateListenerAdded = false;
+function formatTime(s){
+  if(!isFinite(s) || s<0) return '0:00';
+  const m = Math.floor(s/60), sec = Math.floor(s%60);
+  return `${m}:${sec.toString().padStart(2,'0')}`;
+}
+
+// 사용자가 재생바를 손가락/마우스로 끌고 있는 동안에는(input 이벤트) timeupdate가 반대로
+// 재생바 위치를 되돌려버리지 않도록 막아주는 플래그
+let isScrubbing = false;
+
+function setupPlaybackReview(){
+  replayBtn.onclick = ()=>{ video.currentTime = 0; video.play(); };
+  speedSel.onchange = ()=>{ video.playbackRate = parseFloat(speedSel.value); };
+  if(angleToggle) angleToggle.onchange = ()=>{ if(!analyzing) drawSkeletonAtTime(video.currentTime); };
+  video.playbackRate = parseFloat(speedSel.value);
+
+  // 네이티브 <video controls> 대신 쓰는 커스텀 재생/일시정지 버튼과 재생바(scrubBar).
+  // 캔버스가 매 프레임 영상 이미지를 직접 그려서 <video> 위를 완전히 덮기 때문에(drawSkeleton
+  // 참고, HDR/10비트 HEVC 영상에서 <video> 자체 화면 출력만 새까맣게 나오는 기기를 우회하기
+  // 위함), 네이티브 재생바를 쓰면 캔버스에 가려 안 보이게 된다. 그래서 캔버스 바깥의 별도
+  // HTML 엘리먼트로 재생바를 둔다.
+  playPauseBtn.onclick = ()=>{ if(video.paused) video.play(); else video.pause(); };
+  video.addEventListener('play', ()=>{ playPauseBtn.textContent = '⏸'; });
+  video.addEventListener('pause', ()=>{ playPauseBtn.textContent = '▶'; });
+  video.addEventListener('ended', ()=>{ playPauseBtn.textContent = '▶'; });
+
+  scrubBar.addEventListener('input', ()=>{
+    isScrubbing = true;
+    const dur = video.duration || 0;
+    const t = (scrubBar.value/1000) * dur;
+    video.currentTime = t;
+    if(!analyzing) drawSkeletonAtTime(t);
+    scrubTime.textContent = `${formatTime(t)} / ${formatTime(dur)}`;
+  });
+  scrubBar.addEventListener('change', ()=>{ isScrubbing = false; });
+
+  if(!timeupdateListenerAdded){
+    video.addEventListener('timeupdate', ()=>{
+      if(!analyzing) drawSkeletonAtTime(video.currentTime);
+      if(!isScrubbing){
+        const dur = video.duration || 0;
+        if(dur > 0) scrubBar.value = Math.round((video.currentTime/dur)*1000);
+        scrubTime.textContent = `${formatTime(video.currentTime)} / ${formatTime(dur)}`;
+      }
+    });
+    timeupdateListenerAdded = true;
+  }
+}
+function nearestFrame(t){
+  let lo=0, hi=frames.length-1;
+  while(lo<hi){
+    const mid_=(lo+hi)>>1;
+    if(frames[mid_].t < t) lo=mid_+1; else hi=mid_;
+  }
+  return frames[lo];
+}
+function drawSkeletonAtTime(t){
+  const f = nearestFrame(t);
+  if(f) drawSkeleton(f.lm);
+}
+
+// 캔버스의 내부 해상도를 videoWrap 박스(화면에 실제 그려지는 CSS 크기)에 맞춘다.
+// <video>는 object-fit:contain이라 영상 비율에 따라 상하 또는 좌우로 레터박스(검은
+// 여백)가 생기는데, 캔버스를 컨테이너 전체 크기로만 맞추면 그 여백만큼 스켈레톤이
+// 실제 영상 위치와 어긋나 버린다 (관절이 다 풀려 보이던 원인).
+function syncCanvasSize(){
+  canvas.width = videoWrap.clientWidth;
+  canvas.height = videoWrap.clientHeight;
+}
+
+// object-fit:contain 기준으로, 정규화 좌표(0~1, 영상 프레임 기준)를 캔버스 픽셀
+// 좌표로 바꾸기 위한 실제 표시 영역(레터박스 제외한 영상 사각형)을 계산
+function getVideoDisplayRect(){
+  const cw = canvas.width, ch = canvas.height;
+  const vw = video.videoWidth || cw, vh = video.videoHeight || ch;
+  if(!vw || !vh) return { ox:0, oy:0, dw:cw, dh:ch };
+  const scale = Math.min(cw/vw, ch/vh);
+  const dw = vw*scale, dh = vh*scale;
+  return { ox:(cw-dw)/2, oy:(ch-dh)/2, dw, dh };
+}
+
+function drawSkeleton(lm){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const { ox, oy, dw, dh } = getVideoDisplayRect();
+  // 일부 PC(특히 HDR/10비트로 촬영된 HEVC 영상 + 특정 그래픽 드라이버 조합)에서는 <video>
+  // 태그 자체의 화면 출력(paint)만 새까맣게 나오고, 정작 그 영상의 실제 픽셀 데이터는 멀쩡히
+  // 디코딩되고 있는 경우가 실제로 관찰됐다 - 그 증거로, 이런 상황에서도 포즈 인식(MediaPipe)은
+  // 정상적으로 스켈레톤을 찾아냈다(MediaPipe는 <video>가 화면에 "보여지는" 방식과 무관하게
+  // 디코딩된 프레임 버퍼를 직접 읽기 때문). 즉 문제는 디코딩이 아니라 브라우저의 video 렌더링
+  // 파이프라인에만 있는 것으로 보인다. 그래서 <video> 태그가 알아서 화면에 그려주길 기다리는
+  // 대신, 우리가 매 프레임 캔버스에 직접 video의 현재 프레임을 그려서 그 위에 스켈레톤을
+  // 얹는다 - 캔버스로 그리는 경로는 <video> 자체 페인트 파이프라인과 별개라서, 이 방식이면
+  // <video> 태그가 새까맣게 나오는 기기에서도 실제 영상 장면이 보이게 된다.
+  try{ ctx.drawImage(video, ox, oy, dw, dh); }catch(drawErr){ /* 아주 드물게 디코딩 중 프레임을 못 그릴 수 있음 - 다음 프레임에서 다시 시도되므로 무시 */ }
+  const px = x => ox + x*dw, py = y => oy + y*dh;
+  ctx.lineWidth = 3;
+  for(const [a,b,group] of CONNECTIONS){
+    const A=lm[a], B=lm[b];
+    if(!A||!B) continue;
+    ctx.strokeStyle = SKEL_COLOR[group] || 'rgba(94,194,255,0.9)';
+    ctx.beginPath();
+    ctx.moveTo(px(A.x), py(A.y));
+    ctx.lineTo(px(B.x), py(B.y));
+    ctx.stroke();
+  }
+  for(const i of [11,12,13,14,15,16,23,24,25,26,27,28,29,30,31,32]){
+    const P = lm[i];
+    if(!P) continue;
+    ctx.fillStyle = SKEL_COLOR[POINT_GROUP[i]] || 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.arc(px(P.x), py(P.y), 4.5, 0, Math.PI*2);
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(11,15,20,0.8)';
+    ctx.stroke();
+    ctx.lineWidth = 3;
+  }
+
+  if(!angleToggle || angleToggle.checked) drawAngleLabels(lm, px, py);
+}
+
+// 글로 된 피드백("엉덩이 153°, 무릎 151°, 발목 111°")만으로는 어느 관절이 어떤 상태인지
+// 바로 와닿기 어려워서, 같은 각도 숫자를 스켈레톤 위 해당 관절 옆에 실시간으로 함께 표시.
+// 좌/우 각도를 평균 내어 표에서 쓰는 것과 같은 하나의 숫자로 보여줌 (체크포인트 표·피드백과 일관성 유지).
+function midSafe(A,B){ return (A&&B) ? mid(A,B) : null; }
+function angleAvg(lm, a1,b1,c1, a2,b2,c2){
+  const A=lm[a1],B=lm[b1],C=lm[c1], D=lm[a2],E=lm[b2],F=lm[c2];
+  if(!A||!B||!C||!D||!E||!F) return NaN;
+  return (angleAt(A,B,C)+angleAt(D,E,F))/2;
+}
+function drawAngleLabels(lm, px, py){
+  const items = [
+    { name:'엉덩이', deg: angleAvg(lm, IDX.LS,IDX.LH,IDX.LK, IDX.RS,IDX.RH,IDX.RK), at: midSafe(lm[IDX.LH], lm[IDX.RH]) },
+    { name:'무릎',   deg: angleAvg(lm, IDX.LH,IDX.LK,IDX.LA, IDX.RH,IDX.RK,IDX.RA), at: midSafe(lm[IDX.LK], lm[IDX.RK]) },
+    { name:'발목',   deg: angleAvg(lm, IDX.LK,IDX.LA,IDX.LFoot, IDX.RK,IDX.RA,IDX.RFoot), at: midSafe(lm[IDX.LA], lm[IDX.RA]) },
+    { name:'팔꿈치', deg: angleAvg(lm, IDX.LS,IDX.LE,IDX.LW, IDX.RS,IDX.RE,IDX.RW), at: midSafe(lm[IDX.LE], lm[IDX.RE]) },
+  ];
+  for(const it of items){
+    if(!it.at || Number.isNaN(it.deg)) continue;
+    drawAngleTag(px(it.at.x), py(it.at.y), `${it.name} ${Math.round(it.deg)}°`);
+  }
+}
+function drawAngleTag(x, y, text){
+  ctx.font = '600 11.5px system-ui, -apple-system, sans-serif';
+  const padX = 6, padY = 4, h = 19;
+  const w = ctx.measureText(text).width + padX*2;
+  let tx = x + 9, ty = y - h - 7; // 관절점을 가리지 않도록 오른쪽 위로 살짝 띄움
+  tx = Math.max(2, Math.min(canvas.width - w - 2, tx));
+  ty = Math.max(2, Math.min(canvas.height - h - 2, ty));
+  ctx.fillStyle = 'rgba(10,12,16,0.72)';
+  roundRectPath(tx, ty, w, h, 5);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(text, tx+padX, ty+h-padY-1);
+}
+function roundRectPath(x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+
+// ---------- 성장 기록 (히스토리): 같은 동작을 시간에 따라 비교 ----------
+// 저장 원칙: 관절각·판정 요약("숫자")은 항상 가벼운 localStorage에 넣고, 영상 자체는
+// 사용자가 "영상도 저장" 체크박스를 켠 경우에만 훨씬 용량이 큰 IndexedDB에 별도로 저장한다.
+// 어느 쪽이든 기존 원칙("영상은 브라우저 안에서만 처리되고 서버로 전송되지 않는다")과 동일하게
+// 이 브라우저 밖으로는 절대 나가지 않는다.
+const HISTORY_KEY = 'liftHistoryV1';
+const HISTORY_VIDEO_LIMIT = 6; // 영상까지 저장하는 기록은 최근 이만큼만 유지 (저장 공간 보호)
+
+const historyCard = document.getElementById('historyCard');
+const saveHistoryBtn = document.getElementById('saveHistoryBtn');
+const saveVideoToggle = document.getElementById('saveVideoToggle');
+const saveVideoNote = document.getElementById('saveVideoNote');
+const historyListEl = document.getElementById('historyList');
+const historyDeltaBox = document.getElementById('historyDeltaBox');
+const historyChartWrap = document.getElementById('historyChartWrap');
+const historyChartSvg = document.getElementById('historyChart');
+const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+const compareSelectedBtn = document.getElementById('compareSelectedBtn');
+const compareHint = document.getElementById('compareHint');
+const compareResultEl = document.getElementById('compareResult');
+
+let lastFeedbackItems = []; // renderFeedback()이 마지막으로 계산한 items - 기록 저장 시 재사용
+let lastAnalyzedFile = null; // 현재 화면에 올라온 영상의 원본 File - "영상도 저장" 체크 시 사용
+const compareChecked = new Set(); // 비교하려고 체크박스로 고른 기록 id (최대 2개)
+
+saveVideoToggle.addEventListener('change', ()=>{
+  saveVideoNote.style.display = saveVideoToggle.checked ? 'block' : 'none';
+});
+
+function loadHistory(){
+  try{
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ return []; } // 프라이빗 모드 등으로 localStorage를 못 쓰면 빈 기록으로 취급
+}
+function saveHistoryList(list){
+  try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); }
+  catch(e){ console.warn('기록 저장 실패 (저장 공간 문제일 수 있음):', e); }
+}
+
+// ---- 영상 blob은 IndexedDB에 별도 저장 (localStorage는 용량이 작아 영상엔 부적합) ----
+let videoDbPromise = null;
+function openVideoDb(){
+  if(videoDbPromise) return videoDbPromise;
+  videoDbPromise = new Promise((resolve, reject)=>{
+    const req = indexedDB.open('liftHistoryVideosV1', 1);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore('videos'); };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+  return videoDbPromise;
+}
+async function putVideoBlob(id, blob){
+  try{
+    const db = await openVideoDb();
+    await new Promise((resolve, reject)=>{
+      const tx = db.transaction('videos', 'readwrite');
+      tx.objectStore('videos').put(blob, id);
+      tx.oncomplete = resolve; tx.onerror = ()=>reject(tx.error);
+    });
+    return true;
+  }catch(e){ console.warn('영상 저장 실패 (저장 공간 부족일 수 있음):', e); return false; }
+}
+async function getVideoBlob(id){
+  try{
+    const db = await openVideoDb();
+    return await new Promise((resolve, reject)=>{
+      const tx = db.transaction('videos', 'readonly');
+      const req = tx.objectStore('videos').get(id);
+      req.onsuccess = ()=>resolve(req.result || null);
+      req.onerror = ()=>reject(req.error);
+    });
+  }catch(e){ return null; }
+}
+async function deleteVideoBlob(id){
+  try{
+    const db = await openVideoDb();
+    await new Promise((resolve, reject)=>{
+      const tx = db.transaction('videos', 'readwrite');
+      tx.objectStore('videos').delete(id);
+      tx.oncomplete = resolve; tx.onerror = ()=>reject(tx.error);
+    });
+  }catch(e){ /* 삭제 실패는 조용히 무시 - 저장 공간이 부족해지면 다음 정리 때 다시 시도됨 */ }
+}
+
+// 체크포인트 각도 스냅샷 - 영상 자체가 아니라 숫자만 남김
+function checkpointSnapshot(){
+  const keys = currentLift==='cleanjerk'
+    ? ['liftoff','ext','catch','stand','dip','drive','jerkCatch','jerkStand']
+    : ['liftoff','ext','catch','stand'];
+  const snap = {};
+  for(const key of keys){
+    const idx = events[key];
+    const f = idx!=null ? frames[idx] : null;
+    if(f) snap[key] = { t:f.t, hipAngle:f.hipAngle, kneeAngle:f.kneeAngle, elbowAngle:f.elbowAngle, ankleAngle:f.ankleAngle };
+  }
+  return snap;
+}
+
+function buildHistoryRecord(hasVideo){
+  const good = lastFeedbackItems.filter(i=>i.level==='good').length;
+  const warn = lastFeedbackItems.filter(i=>i.level==='warn').length;
+  const bad = lastFeedbackItems.filter(i=>i.level==='bad').length;
+  const { liftoff, catch: catchIdx } = events;
+  const pullTime = (liftoff!=null && catchIdx!=null && frames[liftoff] && frames[catchIdx])
+    ? +(frames[catchIdx].t - frames[liftoff].t).toFixed(2) : null;
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+    savedAt: new Date().toISOString(),
+    lift: currentLift,
+    counts: { good, warn, bad },
+    issues: lastFeedbackItems.filter(i=>i.level!=='good').map(shortLabel),
+    checkpoints: checkpointSnapshot(),
+    pullTime,
+    hasVideo: !!hasVideo,
+  };
+}
+
+async function saveCurrentToHistory(){
+  const list = loadHistory();
+  const record = buildHistoryRecord(saveVideoToggle.checked && !!lastAnalyzedFile);
+  list.push(record);
+  while(list.length > 300) list.shift(); // 숫자만 있는 기록은 가벼우니 넉넉히 유지
+  saveHistoryList(list);
+
+  if(record.hasVideo){
+    await putVideoBlob(record.id, lastAnalyzedFile);
+    await enforceVideoLimit();
+  }
+  renderHistory();
+}
+
+// 영상까지 저장된 기록이 HISTORY_VIDEO_LIMIT개를 넘으면, 가장 오래된 것부터 영상만 지운다
+// (숫자 기록 자체는 남겨서 추이 그래프·15일 비교에는 계속 반영되게 함)
+async function enforceVideoLimit(){
+  const withVideo = loadHistory().filter(r=>r.hasVideo).sort((a,b)=> new Date(a.savedAt)-new Date(b.savedAt));
+  const excess = withVideo.length - HISTORY_VIDEO_LIMIT;
+  if(excess <= 0) return;
+  const toStrip = withVideo.slice(0, excess);
+  const all = loadHistory();
+  for(const r of toStrip){
+    await deleteVideoBlob(r.id);
+    const rec = all.find(x=>x.id===r.id);
+    if(rec) rec.hasVideo = false;
+  }
+  saveHistoryList(all);
+}
+
+saveHistoryBtn.addEventListener('click', async ()=>{
+  saveHistoryBtn.disabled = true;
+  saveHistoryBtn.textContent = '저장 중...';
+  await saveCurrentToHistory();
+  saveHistoryBtn.textContent = '✅ 기록에 저장됨';
+  setTimeout(()=>{ saveHistoryBtn.textContent='📌 이번 결과 기록에 저장'; saveHistoryBtn.disabled=false; }, 1500);
+});
+
+clearHistoryBtn.addEventListener('click', async (e)=>{
+  e.preventDefault();
+  if(!confirm('이 브라우저에 저장된 모든 성장 기록(숫자+영상)을 삭제할까요? 되돌릴 수 없어요.')) return;
+  const all = loadHistory();
+  for(const r of all){ if(r.hasVideo) await deleteVideoBlob(r.id); }
+  saveHistoryList([]);
+  compareChecked.clear();
+  renderHistory();
+});
+
+async function deleteHistoryRecord(id){
+  const list = loadHistory();
+  const rec = list.find(r=>r.id===id);
+  if(rec && rec.hasVideo) await deleteVideoBlob(id);
+  saveHistoryList(list.filter(r=>r.id!==id));
+  compareChecked.delete(id);
+  renderHistory();
+}
+
+const DAY_MS = 24*60*60*1000;
+
+function renderHistory(){
+  const all = loadHistory();
+  const list = all.filter(r=>r.lift===currentLift).sort((a,b)=> new Date(a.savedAt)-new Date(b.savedAt));
+  historyCard.style.display = 'block';
+  compareResultEl.style.display = 'none';
+  compareResultEl.innerHTML = '';
+
+  if(list.length===0){
+    historyListEl.innerHTML = `<p class="explain" style="margin-top:8px;">아직 저장된 기록이 없어요. 위 "이번 결과 기록에 저장" 버튼을 누르면 여기 쌓이기 시작해요.</p>`;
+    historyDeltaBox.style.display='none';
+    historyChartWrap.style.display='none';
+    compareSelectedBtn.disabled = true;
+    return;
+  }
+
+  // ---- 15일 전 대비 자동 비교 ----
+  const latest = list[list.length-1];
+  const targetTime = new Date(latest.savedAt).getTime() - 15*DAY_MS;
+  const past = list.filter(r=>r.id!==latest.id && new Date(r.savedAt).getTime() <= targetTime + DAY_MS)
+                    .sort((a,b)=> Math.abs(new Date(a.savedAt)-targetTime) - Math.abs(new Date(b.savedAt)-targetTime))[0];
+  if(past){
+    historyDeltaBox.style.display = 'block';
+    historyDeltaBox.innerHTML = describeDelta(past, latest, true);
+  } else if(list.length>=2){
+    historyDeltaBox.style.display = 'block';
+    historyDeltaBox.innerHTML = `아직 15일 전후로 비교할 만큼 오래된 기록이 없어요 (현재 ${list.length}개 저장됨). 계속 기록을 쌓으면 15일 단위 변화를 자동으로 보여드릴게요. 지금은 아래 목록에서 원하는 두 기록을 직접 선택해 비교해보세요.`;
+  } else {
+    historyDeltaBox.style.display = 'none';
+  }
+
+  renderHistoryChart(list);
+
+  historyListEl.innerHTML = list.slice().reverse().map(r=>{
+    const d = new Date(r.savedAt);
+    const dateStr = d.toLocaleDateString('ko-KR', {year:'2-digit', month:'2-digit', day:'2-digit'}) + ' ' + d.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+    return `<div class="histRow">
+      <div class="histLeft">
+        <input type="checkbox" class="histCheck" data-id="${r.id}" ${compareChecked.has(r.id)?'checked':''} style="margin-top:3px;width:14px;height:14px;">
+        <div>
+          <div>${dateStr}${r.hasVideo?' · 🎥 영상 있음':''}</div>
+          <div class="histMeta">👍${r.counts.good} ⚠️${r.counts.warn} 🔴${r.counts.bad}${r.pullTime!=null?` · 이륙~캐치 ${r.pullTime}s`:''}</div>
+        </div>
+      </div>
+      <div class="histActions"><button class="histDelBtn" data-id="${r.id}">삭제</button></div>
+    </div>`;
+  }).join('');
+  updateCompareButtonState();
+}
+
+function describeDelta(past, latest, showDays){
+  const daysBetween = Math.round((new Date(latest.savedAt)-new Date(past.savedAt))/DAY_MS);
+  const badDelta = latest.counts.bad - past.counts.bad;
+  const warnDelta = latest.counts.warn - past.counts.warn;
+  const trendWord = badDelta<0 ? '줄었어요 👍' : (badDelta>0 ? '늘었어요' : '그대로예요');
+  const jt = currentLift==='cleanjerk' ? 'drive' : 'ext';
+  const jtLabel = currentLift==='cleanjerk' ? '드라이브' : '트리플 익스텐션';
+  let jointLine = '';
+  if(past.checkpoints[jt] && latest.checkpoints[jt]){
+    const hipD = latest.checkpoints[jt].hipAngle - past.checkpoints[jt].hipAngle;
+    const kneeD = latest.checkpoints[jt].kneeAngle - past.checkpoints[jt].kneeAngle;
+    if(!Number.isNaN(hipD) && !Number.isNaN(kneeD)){
+      jointLine = ` ${jtLabel} 엉덩이각 ${hipD>=0?'+':''}${hipD.toFixed(0)}°, 무릎각 ${kneeD>=0?'+':''}${kneeD.toFixed(0)}° 변화.`;
+    }
+  }
+  const prefix = showDays
+    ? `<b>${daysBetween}일 전(${new Date(past.savedAt).toLocaleDateString('ko-KR')}) 기록 대비:</b> `
+    : '<b>선택한 두 기록 비교:</b> ';
+  return `${prefix}개선 필요 항목 ${Math.abs(badDelta)}개 ${trendWord}, 주의 항목 ${warnDelta>=0?'+':''}${warnDelta}개.${jointLine}`;
+}
+
+function renderHistoryChart(list){
+  if(list.length < 2){ historyChartWrap.style.display='none'; return; }
+  historyChartWrap.style.display='block';
+  const n = list.length;
+  const W=640, H=160, PADL=8, PADR=8, PADT=10, PADB=22;
+  const plotW=W-PADL-PADR, plotH=H-PADT-PADB;
+  const maxCount = Math.max(1, ...list.map(r=>Math.max(r.counts.good, r.counts.warn, r.counts.bad)));
+  const x = i => n>1 ? PADL + (i/(n-1))*plotW : PADL;
+  const y = v => PADT + (1-v/maxCount)*plotH;
+  const COL = { good:'#0ca30c', warn:'#fab219', bad:'#e66767', axis:'#383835', muted:'#8fa1b3' };
+  const linePath = key => list.map((r,i)=>`${i===0?'M':'L'} ${x(i).toFixed(1)} ${y(r.counts[key]).toFixed(1)}`).join(' ');
+  historyChartSvg.innerHTML = `
+    <line x1="${PADL}" y1="${H-PADB}" x2="${W-PADR}" y2="${H-PADB}" stroke="${COL.axis}" stroke-width="1" />
+    <path d="${linePath('bad')}" fill="none" stroke="${COL.bad}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${linePath('warn')}" fill="none" stroke="${COL.warn}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${linePath('good')}" fill="none" stroke="${COL.good}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="${PADL}" y="${H-6}" font-size="9" fill="${COL.muted}">${new Date(list[0].savedAt).toLocaleDateString('ko-KR',{month:'2-digit',day:'2-digit'})}</text>
+    <text x="${W-PADR}" y="${H-6}" font-size="9" fill="${COL.muted}" text-anchor="end">${new Date(list[n-1].savedAt).toLocaleDateString('ko-KR',{month:'2-digit',day:'2-digit'})}</text>
+  `;
+}
+
+historyListEl.addEventListener('click', e=>{
+  const del = e.target.closest('.histDelBtn');
+  if(del){ deleteHistoryRecord(del.dataset.id); }
+});
+historyListEl.addEventListener('change', e=>{
+  const chk = e.target.closest('.histCheck');
+  if(!chk) return;
+  if(chk.checked){
+    if(compareChecked.size>=2){
+      // 이미 2개가 선택된 상태에서 3번째를 고르면, 가장 먼저 고른 걸 자동으로 해제
+      const first = compareChecked.values().next().value;
+      compareChecked.delete(first);
+    }
+    compareChecked.add(chk.dataset.id);
+  } else {
+    compareChecked.delete(chk.dataset.id);
+  }
+  renderHistory(); // 체크 상태를 화면에 다시 반영
+});
+
+function updateCompareButtonState(){
+  compareSelectedBtn.disabled = compareChecked.size !== 2;
+  compareHint.textContent = compareChecked.size===2
+    ? '아래 "선택한 2개 기록 비교" 버튼을 눌러보세요'
+    : '기록 목록에서 체크박스로 2개를 고르면 비교할 수 있어요';
+}
+
+compareSelectedBtn.addEventListener('click', async ()=>{
+  const ids = Array.from(compareChecked);
+  if(ids.length!==2) return;
+  const all = loadHistory();
+  let [a, b] = ids.map(id=>all.find(r=>r.id===id)).filter(Boolean);
+  if(!a || !b) return;
+  if(new Date(a.savedAt) > new Date(b.savedAt)) [a,b] = [b,a]; // 시간순으로 왼쪽=이전, 오른쪽=이후
+  await renderCompare(a, b);
+});
+
+async function renderCompare(a, b){
+  compareResultEl.style.display = 'block';
+  compareResultEl.innerHTML = `<div id="compareDelta">${describeDelta(a, b, false)}</div><div id="compareVideos" style="margin-top:10px;"></div>`;
+  const videosEl = document.getElementById('compareVideos');
+
+  if(a.hasVideo && b.hasVideo){
+    const [blobA, blobB] = await Promise.all([getVideoBlob(a.id), getVideoBlob(b.id)]);
+    if(blobA && blobB){
+      videosEl.innerHTML = `
+        <div class="compareGrid">
+          <div class="compareCol">
+            <h4>${new Date(a.savedAt).toLocaleDateString('ko-KR')}</h4>
+            <video id="cmpVideoA" playsinline controls muted></video>
+            <div class="compareJumpRow" id="cmpJumpA"></div>
+          </div>
+          <div class="compareCol">
+            <h4>${new Date(b.savedAt).toLocaleDateString('ko-KR')}</h4>
+            <video id="cmpVideoB" playsinline controls muted></video>
+            <div class="compareJumpRow" id="cmpJumpB"></div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">두 영상 아래 버튼으로 같은 구간끼리 맞춰서 비교해보세요.</div>
+      `;
+      const videoA = document.getElementById('cmpVideoA'), videoB = document.getElementById('cmpVideoB');
+      videoA.src = URL.createObjectURL(blobA);
+      videoB.src = URL.createObjectURL(blobB);
+      videoA.playbackRate = 0.5; videoB.playbackRate = 0.5;
+      setupCompareJumpButtons(document.getElementById('cmpJumpA'), videoA, a);
+      setupCompareJumpButtons(document.getElementById('cmpJumpB'), videoB, b);
+    } else {
+      videosEl.innerHTML = `<p class="explain">저장된 영상을 불러오지 못했어요 (저장 공간 정리 등으로 지워졌을 수 있어요).</p>`;
+    }
+  } else {
+    videosEl.innerHTML = `<p class="explain">두 기록 중 영상이 저장 안 된 게 있어서 숫자 비교만 보여드려요. 저장할 때 "영상도 저장" 체크박스를 켜면 다음부턴 나란히 영상으로도 비교할 수 있어요.</p>`;
+  }
+}
+
+function setupCompareJumpButtons(container, videoEl, record){
+  const labels = { liftoff:'이륙', ext:'익스텐션', catch:'캐치', stand:'회복', dip:'딥', drive:'드라이브', jerkCatch:'저크캐치', jerkStand:'저크회복' };
+  container.innerHTML = '';
+  for(const key of Object.keys(record.checkpoints)){
+    const cp = record.checkpoints[key];
+    const btn = document.createElement('button');
+    btn.textContent = labels[key] || key;
+    btn.addEventListener('click', ()=>{ videoEl.currentTime = cp.t; });
+    container.appendChild(btn);
+  }
+}
+
+// 페이지를 새로 열었을 때도(아직 영상을 안 올렸어도) 지난 기록이 있으면 바로 보여줌
+renderHistory();
+</script>
+</body>
+</html>
